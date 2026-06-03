@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="Blue Ridge Asphalt and Sealcoating">
+  <rect width="1200" height="630" fill="#15232c"/>
+  <rect x="0" y="470" width="1200" height="160" fill="#2f4858"/>
+  <g fill="#d9822b">
+    <rect x="120" y="545" width="90" height="14"/>
+    <rect x="300" y="545" width="90" height="14"/>
+    <rect x="480" y="545" width="90" height="14"/>
+    <rect x="660" y="545" width="90" height="14"/>
+    <rect x="840" y="545" width="90" height="14"/>
+    <rect x="1020" y="545" width="90" height="14"/>
+  </g>
+  <text x="80" y="220" fill="#d9822b" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700" letter-spacing="4">CHARLOTTESVILLE, VA &amp; SHENANDOAH VALLEY</text>
+  <text x="80" y="320" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="78" font-weight="800">Blue Ridge Asphalt</text>
+  <text x="80" y="400" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="44" font-weight="600">Asphalt Paving &amp; Sealcoating</text>
+</svg>

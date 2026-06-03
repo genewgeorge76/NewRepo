@@ -1,0 +1,16 @@
+{
+  "name": "Blue Ridge Asphalt & Sealcoating",
+  "short_name": "Blue Ridge Asphalt",
+  "description": "Asphalt paving, resurfacing, repair, and sealcoating in Charlottesville, VA and the surrounding Shenandoah Valley.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f3ee",
+  "theme_color": "#15232c",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
