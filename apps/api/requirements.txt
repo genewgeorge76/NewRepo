@@ -18,3 +18,5 @@ python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 sentry-sdk[fastapi]==2.19.2
 python-dotenv==1.0.1
+beautifulsoup4==4.12.3
+boto3==1.35.81

@@ -9,7 +9,13 @@ from slowapi.errors import RateLimitExceeded
 from .config import settings
 from .core.limiter import limiter
 from .database import Base, engine
-from .routers import health, leads, ai, analytics, blog, payments, voice, lien_calendar, customers, crm
+from .routers import (
+    health, leads, ai, analytics, blog, payments, voice,
+    lien_calendar, customers, crm,
+    # Wave 2
+    proposals, operations, dispatch, foreman, workforce, subcontractors,
+    safety, cashflow, kpi, vdot_bids, market_intelligence, gallery,
+)
 
 
 @asynccontextmanager
@@ -59,3 +65,17 @@ app.include_router(voice.router, prefix='/api/v1')
 app.include_router(lien_calendar.router, prefix='/api/v1')
 app.include_router(customers.router, prefix='/api/v1')
 app.include_router(crm.router, prefix='/api/v1')
+
+# Wave 2
+app.include_router(proposals.router, prefix='/api/v1')
+app.include_router(operations.router, prefix='/api/v1')
+app.include_router(dispatch.router, prefix='/api/v1')
+app.include_router(foreman.router, prefix='/api/v1')
+app.include_router(workforce.router, prefix='/api/v1')
+app.include_router(subcontractors.router, prefix='/api/v1')
+app.include_router(safety.router, prefix='/api/v1')
+app.include_router(cashflow.router, prefix='/api/v1')
+app.include_router(kpi.router, prefix='/api/v1')
+app.include_router(vdot_bids.router, prefix='/api/v1')
+app.include_router(market_intelligence.router, prefix='/api/v1')
+app.include_router(gallery.router, prefix='/api/v1')

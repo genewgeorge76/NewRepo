@@ -14,6 +14,8 @@ import { LocationPageRoute } from './routes/location-page';
 import { BlogPage } from './routes/blog';
 import { BlogPostPage } from './routes/blog-post';
 import { PhotoInspectPage } from './routes/photo-inspect';
+import { GalleryPage } from './routes/gallery';
+import { CommandCenterPage } from './routes/command-center';
 
 const rootRoute = createRootRoute({ component: Root });
 
@@ -30,6 +32,8 @@ const blogRoute = createRoute({ getParentRoute: () => rootRoute, path: '/blog', 
 const blogPostRoute = createRoute({ getParentRoute: () => rootRoute, path: '/blog/$slug', component: BlogPostPage });
 
 const photoInspectRoute = createRoute({ getParentRoute: () => rootRoute, path: '/photo-inspect', component: PhotoInspectPage });
+const galleryRoute = createRoute({ getParentRoute: () => rootRoute, path: '/gallery', component: GalleryPage });
+const commandCenterRoute = createRoute({ getParentRoute: () => rootRoute, path: '/command-center', component: CommandCenterPage });
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -42,6 +46,8 @@ const routeTree = rootRoute.addChildren([
   blogRoute,
   blogPostRoute,
   photoInspectRoute,
+  galleryRoute,
+  commandCenterRoute,
 ]);
 
 export const router = createRouter({

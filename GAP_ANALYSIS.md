@@ -1,5 +1,31 @@
 # GAP ANALYSIS — Worden Standard v5 vs Source Repos
-*Generated 2026-06-20. Wave 1 completed 2026-06-20. Source repos treated as read-only.*
+*Generated 2026-06-20. Wave 1 completed 2026-06-20. Wave 2 completed 2026-06-20. Source repos treated as read-only.*
+
+---
+
+## Wave 2 — Completed 2026-06-20
+
+12 new capabilities ported at premium quality (TypeScript strict 0 errors, real logic, model-matched fields):
+
+| # | Item | What Was Built |
+|---|---|---|
+| 1 | **Proposals / Document Generation** | `routers/proposals.py` (5 endpoints) + `services/proposal_engine.py` — GPT-4o 7-section markdown proposal, win/loss outcome tracking, win-rate stats |
+| 2 | **Operations / Work Orders** | `routers/operations.py` (7 endpoints) — work order CRUD with auto-timestamps (started_at, completed_at), stats summary, jobs pipeline view |
+| 3 | **Dispatch / Scheduling** | `routers/dispatch.py` (5 endpoints) + `services/dispatch_engine.py` — haversine crew proximity scoring, skill matching, weekly schedule, availability check |
+| 4 | **Foreman Check-In** | `routers/foreman.py` (4 endpoints) — timestamped progress notes, active-jobs dashboard, completed-today count, site status |
+| 5 | **Workforce / Crew** | `routers/workforce.py` (6 endpoints) — member CRUD, cert expiry alerts (license, OSHA card, JSON cert array), soft-terminate |
+| 6 | **Subcontractors** | `routers/subcontractors.py` (7 endpoints) — sub directory, performance reviews (quality/schedule/communication 1–5), aggregate rating, compliance expiry alerts |
+| 7 | **Safety / OSHA** | `routers/safety.py` (6 endpoints) — GPT-4o toolbox talks (12 topics), incident CRUD, TRIR/DART rate calculator, aggregate site safety score |
+| 8 | **Cash Flow** | `routers/cashflow.py` (6 endpoints) — signed-amount entry CRUD, 13-week rolling forecast with seasonal adjustment (off-season Nov–Feb), alert thresholds |
+| 9 | **KPI Dashboard** | `routers/kpi.py` (1 endpoint) — single aggregate wall: pipeline, jobs, work orders, workforce, safety, cashflow, proposals, VDOT, gallery |
+| 10 | **VDOT Bid Scraper** | `routers/vdot_bids.py` (4 endpoints) — public VDOT advertisement page scraped with httpx + BeautifulSoup4, auto-tiering (WHALE/SHARK/FISH by estimate), background scan trigger |
+| 11 | **Market Intelligence** | `routers/market_intelligence.py` (3 endpoints) — seasonal demand curve (12-month index), 51-state paving demand signals, competitor landscape with win-rate cross-reference |
+| 12 | **Gallery** | `routers/gallery.py` (3 endpoints) — photo upload with local filesystem + S3 dual backend, list with state/type/featured filters, delete with storage cleanup |
+
+**Services added:** `conversation_memory.py` (ChatSession + ChatMessage), `proposal_engine.py`, `dispatch_engine.py`  
+**ai.py updated:** Jarvis now accepts `session_id`, hydrates history from DB, persists replies  
+**Frontend added:** `/gallery` (masonry grid, lightbox, upload), `/command-center` (authenticated KPI wall)  
+**Ops stations added:** Dispatch · Safety · Cash Flow · Market Intelligence (15 stations total)
 
 ---
 

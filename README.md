@@ -57,28 +57,34 @@ uvicorn app.main:app --reload   # http://localhost:8000
 ## Apps
 
 ### `apps/web` — Public Website
-Routes: Home · About · Services · Estimator · Contact · **Service Area (`/locations`)** · **51 City Pages (`/locations/:slug`)** · **Blog** · **Blog Post** · **AI Photo Inspector** (`/photo-inspect`)
+Routes: Home · About · Services · Estimator · Contact · **Service Area (`/locations`)** · **51 City Pages (`/locations/:slug`)** · **Blog** · **Blog Post** · **AI Photo Inspector** (`/photo-inspect`) · **Gallery** (`/gallery`) · **Command Center** (`/command-center`)
 
 - Deployed to Netlify — `netlify.toml` has SPA fallback for all routes
 - TanStack Router v1 (manual route tree)
 - JSON-LD schemas on every location page (LocalBusiness, BreadcrumbList, FAQPage)
 - Blog post pages: loading skeleton → content or 404 (no "Article Not Found" prerender flash)
+- Gallery: masonry photo grid, upload with auth, lightbox, filter by project type
+- Command Center: authenticated KPI dashboard (pipeline, jobs, workforce, safety, cashflow, VDOT, gallery stats)
 
-### `apps/ops` — Worden Standard v5 Dashboard (11 stations)
-Home · Jarvis AI · Estimate · Jobs · Crew · Equipment · Weather · Banking · Legal · **CRM** · **Lien Calendar**
+### `apps/ops` — Worden Standard v5 Dashboard (15 stations)
+Home · Jarvis AI · Estimate · Jobs · Crew · Equipment · Weather · Banking · Legal · CRM · Lien Calendar · **Dispatch** · **Safety** · **Cash Flow** · **Market**
 
 - Internal only — do not expose publicly
 - All data persisted to `localStorage` for offline field use
 - 10-day paving GO/CAUTION/NO-GO forecast via Open-Meteo
 - 51-state legal database in `packages/core/src/legal.ts`
+- Dispatch: weekly schedule view, crew assignments
+- Safety: OSHA incident log, TRIR/DART rate, recent incidents
+- Cash Flow: 13-week rolling forecast with seasonal adjustments
+- Market: Seasonal demand index, VDOT bid stats by tier
 
-### `apps/api` — FastAPI Backend (41 endpoints)
+### `apps/api` — FastAPI Backend (95+ endpoints)
 
 | Router | Endpoints |
 |---|---|
 | health | `/health`, `/health/db` |
 | leads | `/api/v1/leads/contact`, list, get, update |
-| ai | `/api/v1/ai/jarvis`, `/bid-score`, `/photo-inspect` (GPT-4o Vision) |
+| ai | `/api/v1/ai/jarvis` (w/ conversation memory), `/bid-score`, `/photo-inspect` (GPT-4o Vision) |
 | analytics | `/api/v1/analytics/summary` |
 | blog | 7 endpoints — CRUD + AI draft generation |
 | payments | 3 endpoints — Stripe checkout, webhook, status |
@@ -86,10 +92,23 @@ Home · Jarvis AI · Estimate · Jobs · Crew · Equipment · Weather · Banking
 | lien | 5 endpoints — calculate, track, upcoming, entries, states |
 | customers | 8 endpoints — CRUD, service history, bulk import |
 | crm | 3 endpoints — leads pipeline, stage update, funnel |
+| **proposals** | 5 endpoints — AI proposal gen, CRUD, win-rate stats |
+| **operations** | 7 endpoints — work order CRUD + stats + jobs pipeline |
+| **dispatch** | 5 endpoints — schedule, assign, unassign, recommend crew, availability |
+| **foreman** | 4 endpoints — check-in, active jobs, completed today, site status |
+| **workforce** | 6 endpoints — member CRUD, expiring cert alerts |
+| **subcontractors** | 7 endpoints — sub directory, performance reviews, compliance expiry |
+| **safety** | 6 endpoints — toolbox talks (GPT-4o), incident log, OSHA rate, site score |
+| **cashflow** | 6 endpoints — entry CRUD, 13-week forecast, alert thresholds |
+| **kpi** | 1 endpoint — aggregate KPI wall (pipeline, jobs, WOs, workforce, safety, cashflow, proposals, VDOT, gallery) |
+| **vdot-bids** | 4 endpoints — list, get, stats, trigger scrape (httpx + BeautifulSoup4) |
+| **market-intelligence** | 3 endpoints — seasonal demand, state demand signals, competitor landscape |
+| **gallery** | 3 endpoints — upload (local + S3), list with filters, delete |
 
 All protected routes require `X-Master-Key` header.  
 Rate limiting via `slowapi` — per-router limits.  
-Redis cache (in-memory fallback for dev).
+Redis cache (in-memory fallback for dev).  
+DB-backed conversation memory — Jarvis sessions persist across requests (ChatSession + ChatMessage models).
 
 ## Packages
 

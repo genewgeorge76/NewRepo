@@ -25,7 +25,7 @@ function save<T>(key: string, val: T) {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type Station = 'home' | 'jarvis' | 'estimate' | 'jobs' | 'crew' | 'equipment' | 'weather' | 'banking' | 'legal' | 'crm' | 'lien';
+type Station = 'home' | 'jarvis' | 'estimate' | 'jobs' | 'crew' | 'equipment' | 'weather' | 'banking' | 'legal' | 'crm' | 'lien' | 'dispatch' | 'safety' | 'cashflow' | 'market';
 type AutoMode = 'manual' | 'hybrid' | 'auto';
 
 interface JarvisMsg { role: 'jarvis' | 'user'; text: string; }
@@ -50,6 +50,10 @@ const NAV: { id: Station; icon: string; label: string }[] = [
   { id: 'legal',     icon: '§', label: 'Legal'     },
   { id: 'crm',       icon: '◈', label: 'CRM'       },
   { id: 'lien',      icon: '⚖', label: 'Lien Cal'  },
+  { id: 'dispatch',  icon: '⌖', label: 'Dispatch'  },
+  { id: 'safety',    icon: '⛨', label: 'Safety'    },
+  { id: 'cashflow',  icon: '◎', label: 'Cash Flow' },
+  { id: 'market',    icon: '⚑', label: 'Market'    },
 ];
 
 const JOB_STATUSES: Job['status'][] = [
@@ -341,7 +345,7 @@ export default function App() {
       <div style={{ flex:1, overflowY:'auto', display:'flex', flexDirection:'column' }}>
         {/* Header bar */}
         <div style={{ padding:'6px 18px', borderBottom:'1px solid rgba(255,255,255,0.03)', display:'flex', alignItems:'center', justifyContent:'space-between', minHeight:34, flexShrink:0 }}>
-          <div style={{ fontSize:15, fontWeight:600, color:'#e0e2e8' }}>{{ home:'Home', jarvis:'Jarvis', estimate:'New Estimate', jobs:'Jobs', crew:'Crew', equipment:'Equipment', weather:'Weather', banking:'Banking', legal:'Legal / Compliance', crm:'CRM', lien:'Lien Calendar' }[station]}</div>
+          <div style={{ fontSize:15, fontWeight:600, color:'#e0e2e8' }}>{{ home:'Home', jarvis:'Jarvis', estimate:'New Estimate', jobs:'Jobs', crew:'Crew', equipment:'Equipment', weather:'Weather', banking:'Banking', legal:'Legal / Compliance', crm:'CRM', lien:'Lien Calendar', dispatch:'Dispatch', safety:'Safety / OSHA', cashflow:'Cash Flow', market:'Market Intelligence' }[station]}</div>
           <div style={{ fontSize:11, color:'rgba(255,255,255,0.1)', display:'flex', gap:12, alignItems:'center' }}>
             {todayDecision && <span style={{ color: DECISION_COLOR[todayDecision], fontWeight:700, fontSize:11 }}>PAVING: {todayDecision}</span>}
             {now.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' })}
@@ -854,6 +858,26 @@ export default function App() {
             </div>
           )}
 
+          {/* ── DISPATCH ── */}
+          {station === 'dispatch' && (
+            <DispatchStation apiBase={import.meta.env.VITE_API_BASE_URL || ''} masterKey={import.meta.env.VITE_MASTER_KEY || ''} />
+          )}
+
+          {/* ── SAFETY ── */}
+          {station === 'safety' && (
+            <SafetyStation apiBase={import.meta.env.VITE_API_BASE_URL || ''} masterKey={import.meta.env.VITE_MASTER_KEY || ''} />
+          )}
+
+          {/* ── CASH FLOW ── */}
+          {station === 'cashflow' && (
+            <CashFlowStation apiBase={import.meta.env.VITE_API_BASE_URL || ''} masterKey={import.meta.env.VITE_MASTER_KEY || ''} />
+          )}
+
+          {/* ── MARKET INTELLIGENCE ── */}
+          {station === 'market' && (
+            <MarketStation apiBase={import.meta.env.VITE_API_BASE_URL || ''} masterKey={import.meta.env.VITE_MASTER_KEY || ''} />
+          )}
+
         </div>
       </div>
 
@@ -878,6 +902,199 @@ export default function App() {
               ))}
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Wave 2 Station Sub-Components ────────────────────────────────────────────
+
+interface StationProps { apiBase: string; masterKey: string; }
+
+function authHeaders(key: string) {
+  return { 'Content-Type': 'application/json', 'X-Master-Key': key };
+}
+
+function DispatchStation({ apiBase, masterKey }: StationProps) {
+  const [schedule, setSchedule] = React.useState<unknown[]>([]);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    fetch(`${apiBase}/api/v1/dispatch/schedule`, { headers: authHeaders(masterKey) })
+      .then(r => r.ok ? r.json() : { schedule: [] })
+      .then(d => setSchedule(d.schedule || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [apiBase, masterKey]);
+
+  const row = (label: string, value: string | number) => (
+    <div style={{ display: 'flex', gap: 10, padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.2)', width: 120, flexShrink: 0 }}>{label}</span>
+      <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)' }}>{value}</span>
+    </div>
+  );
+
+  return (
+    <div style={{ maxWidth: 680 }}>
+      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.12)', marginBottom: 10 }}>Next 7 days — work orders requiring crew assignment</div>
+      {loading ? <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12 }}>Loading…</div> : schedule.length === 0 ? (
+        <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12 }}>No scheduled work orders.</div>
+      ) : (schedule as any[]).map((wo: any) => (
+        <div key={wo.id} style={{ background: 'rgba(255,255,255,0.015)', borderRadius: 5, padding: '9px 12px', marginBottom: 4, border: '1px solid rgba(255,255,255,0.04)' }}>
+          {row('Work Order', wo.title)}
+          {row('Status', wo.status)}
+          {row('Site', wo.site_address || '—')}
+          {row('Date', wo.scheduled_date ? new Date(wo.scheduled_date).toLocaleDateString() : '—')}
+          {row('Crew', wo.crew_assigned || 'Unassigned')}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SafetyStation({ apiBase, masterKey }: StationProps) {
+  const [incidents, setIncidents] = React.useState<unknown[]>([]);
+  const [rate, setRate] = React.useState<any>(null);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    Promise.all([
+      fetch(`${apiBase}/api/v1/safety/incidents?limit=20`, { headers: authHeaders(masterKey) }).then(r => r.ok ? r.json() : { incidents: [] }),
+      fetch(`${apiBase}/api/v1/safety/osha-rate`, { headers: authHeaders(masterKey) }).then(r => r.ok ? r.json() : null),
+    ]).then(([inc, rate]) => { setIncidents(inc.incidents || []); setRate(rate); })
+      .catch(() => {}).finally(() => setLoading(false));
+  }, [apiBase, masterKey]);
+
+  return (
+    <div style={{ maxWidth: 680 }}>
+      {rate && (
+        <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+          {[['TRIR', rate.trir], ['DART Rate', rate.dart_rate], ['Recordables', rate.recordable_incidents], ['Incidents', rate.recordable_incidents]].map(([l, v]) => (
+            <div key={String(l)} style={{ flex: 1, background: 'rgba(255,255,255,0.015)', borderRadius: 5, padding: '9px 12px', border: '1px solid rgba(255,255,255,0.04)' }}>
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', marginBottom: 3 }}>{l}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: '#e0e2e8' }}>{v}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.12)', marginBottom: 8 }}>Recent incidents</div>
+      {loading ? <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12 }}>Loading…</div> : incidents.length === 0 ? (
+        <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12 }}>No incidents logged. ✓</div>
+      ) : (incidents as any[]).map((inc: any) => (
+        <div key={inc.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '6px 10px', background: 'rgba(255,255,255,0.015)', borderRadius: 4, marginBottom: 2, border: inc.osha_recordable ? '1px solid rgba(239,68,68,0.25)' : '1px solid rgba(255,255,255,0.03)' }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: inc.osha_recordable ? '#ef4444' : '#f5a623', flexShrink: 0 }} />
+          <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inc.description}</span>
+          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.15)', whiteSpace: 'nowrap' }}>{inc.incident_type} · {new Date(inc.incident_date).toLocaleDateString()}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CashFlowStation({ apiBase, masterKey }: StationProps) {
+  const [forecast, setForecast] = React.useState<any>(null);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    fetch(`${apiBase}/api/v1/cashflow/forecast`, { headers: authHeaders(masterKey) })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setForecast(d))
+      .catch(() => {}).finally(() => setLoading(false));
+  }, [apiBase, masterKey]);
+
+  if (loading) return <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12 }}>Loading…</div>;
+  if (!forecast) return <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12 }}>No cash flow data.</div>;
+
+  return (
+    <div style={{ maxWidth: 720 }}>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+        {[
+          ['Current Est. Balance', `$${(forecast.current_balance_estimate || 0).toLocaleString()}`],
+          ['Negative Weeks', forecast.negative_weeks],
+          ['First Negative', forecast.first_negative_week ? `Wk ${forecast.first_negative_week.week}` : 'None'],
+        ].map(([l, v]) => (
+          <div key={String(l)} style={{ flex: 1, background: 'rgba(255,255,255,0.015)', borderRadius: 5, padding: '9px 12px', border: '1px solid rgba(255,255,255,0.04)' }}>
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', marginBottom: 3 }}>{l}</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: l === 'Negative Weeks' && forecast.negative_weeks > 0 ? '#ef4444' : '#e0e2e8' }}>{v}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.12)', marginBottom: 8 }}>13-week rolling forecast</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        {(forecast.forecast || []).slice(0, 13).map((w: any) => (
+          <div key={w.week} style={{ display: 'flex', gap: 10, padding: '5px 8px', borderRadius: 3, background: w.alert ? 'rgba(239,68,68,0.06)' : 'rgba(255,255,255,0.01)', border: w.alert ? '1px solid rgba(239,68,68,0.15)' : '1px solid transparent' }}>
+            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.15)', width: 50, flexShrink: 0 }}>Wk {w.week}</span>
+            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', width: 70 }}>{w.start}</span>
+            <span style={{ fontSize: 11, color: '#4ade80', width: 80, textAlign: 'right' }}>+${w.projected_inflow.toLocaleString()}</span>
+            <span style={{ fontSize: 11, color: '#f87171', width: 80, textAlign: 'right' }}>-${w.projected_outflow.toLocaleString()}</span>
+            <span style={{ fontSize: 11, fontWeight: 600, color: w.running_balance < 0 ? '#ef4444' : '#e0e2e8', width: 90, textAlign: 'right' }}>${w.running_balance.toLocaleString()}</span>
+            {w.alert && <span style={{ fontSize: 10, color: '#ef4444' }}>⚠</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MarketStation({ apiBase, masterKey }: StationProps) {
+  const [seasonal, setSeasonal] = React.useState<any>(null);
+  const [vdot, setVdot] = React.useState<any>(null);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    Promise.all([
+      fetch(`${apiBase}/api/v1/market-intelligence/seasonal`, { headers: authHeaders(masterKey) }).then(r => r.ok ? r.json() : null),
+      fetch(`${apiBase}/api/v1/vdot-bids/stats`, { headers: authHeaders(masterKey) }).then(r => r.ok ? r.json() : null),
+    ]).then(([s, v]) => { setSeasonal(s); setVdot(v); })
+      .catch(() => {}).finally(() => setLoading(false));
+  }, [apiBase, masterKey]);
+
+  if (loading) return <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12 }}>Loading…</div>;
+
+  return (
+    <div style={{ maxWidth: 680 }}>
+      {seasonal && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.12)', marginBottom: 8 }}>Seasonal demand</div>
+          <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+            {[
+              ['This Month', `${seasonal.current_demand_index}/100`],
+              ['Next Month', `${seasonal.next_month_demand_index}/100`],
+              ['Trend', seasonal.trend],
+            ].map(([l, v]) => (
+              <div key={String(l)} style={{ flex: 1, background: 'rgba(255,255,255,0.015)', borderRadius: 5, padding: '9px 12px', border: '1px solid rgba(255,255,255,0.04)' }}>
+                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', marginBottom: 3 }}>{l}</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: v === 'rising' ? '#4ade80' : v === 'falling' ? '#f87171' : '#e0e2e8' }}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)', padding: '8px 10px', background: 'rgba(245,166,35,0.06)', borderRadius: 4, borderLeft: '2px solid rgba(245,166,35,0.3)' }}>
+            {seasonal.recommendation}
+          </div>
+        </div>
+      )}
+      {vdot && (
+        <div>
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.12)', marginBottom: 8 }}>VDOT bids</div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            {[['Open', vdot.open], ['Awarded', vdot.awarded], ['Total', vdot.total]].map(([l, v]) => (
+              <div key={String(l)} style={{ flex: 1, background: 'rgba(255,255,255,0.015)', borderRadius: 5, padding: '9px 12px', border: '1px solid rgba(255,255,255,0.04)' }}>
+                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', marginBottom: 3 }}>{l}</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: '#e0e2e8' }}>{v}</div>
+              </div>
+            ))}
+          </div>
+          {vdot.by_tier && (
+            <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+              {[['WHALE', vdot.by_tier.WHALE], ['SHARK', vdot.by_tier.SHARK], ['FISH', vdot.by_tier.FISH]].map(([l, v]) => (
+                <div key={String(l)} style={{ flex: 1, background: 'rgba(255,255,255,0.01)', borderRadius: 4, padding: '6px 10px', border: '1px solid rgba(255,255,255,0.03)' }}>
+                  <div style={{ fontSize: 10, color: l === 'WHALE' ? '#f5a623' : l === 'SHARK' ? '#60a5fa' : '#4ade80', marginBottom: 2 }}>{l}</div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: '#e0e2e8' }}>{v}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

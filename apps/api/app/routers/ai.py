@@ -2,13 +2,18 @@ import base64
 import logging
 import time
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..core.limiter import AI_LIMIT, limiter
+from ..database import get_db
 from ..services.ai_engine import ask_jarvis, score_bid
+from ..services.conversation_memory import (
+    append_message, get_history, get_or_create_session,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +26,7 @@ _MAX_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
 class JarvisRequest(BaseModel):
     messages: list[dict]
     field_mode: bool = False
+    session_id: str | None = None      # omit for a new session
 
 
 class BidScoreRequest(BaseModel):
@@ -29,11 +35,28 @@ class BidScoreRequest(BaseModel):
 
 
 @router.post('/jarvis')
-async def jarvis_endpoint(body: JarvisRequest):
+async def jarvis_endpoint(body: JarvisRequest, db: Session = Depends(get_db)):
     if not settings.anthropic_api_key:
         raise HTTPException(503, 'AI not configured — set ANTHROPIC_API_KEY')
-    reply = await ask_jarvis(body.messages, body.field_mode)
-    return {'reply': reply}
+
+    # Resolve or create session
+    session_id = get_or_create_session(db, body.session_id, context='jarvis')
+
+    # Prepend history to messages so Jarvis has full context
+    history = get_history(db, session_id, limit=20)
+    hydrated_messages = history + body.messages
+
+    # Persist incoming user turn(s)
+    for msg in body.messages:
+        if msg.get('role') == 'user':
+            append_message(db, session_id, 'user', msg.get('content', ''))
+
+    reply = await ask_jarvis(hydrated_messages, body.field_mode)
+
+    # Persist assistant reply
+    append_message(db, session_id, 'assistant', reply)
+
+    return {'reply': reply, 'session_id': session_id}
 
 
 @router.post('/bid-score')

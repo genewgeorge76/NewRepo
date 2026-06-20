@@ -34,6 +34,16 @@ class Settings(BaseSettings):
     twilio_auth_token: str = ''
     twilio_from_number: str = ''
 
+    # Gallery / file storage
+    gallery_storage_path: str = './gallery_uploads'
+    s3_bucket: str = ''
+    s3_region: str = 'us-east-1'
+    aws_access_key_id: str = ''
+    aws_secret_access_key: str = ''
+
+    # VDOT scraper
+    vdot_bids_url: str = 'https://www.vdot.virginia.gov/business/construction-division/advertisement/'
+
     # Monitoring
     sentry_dsn: str = ''
 
