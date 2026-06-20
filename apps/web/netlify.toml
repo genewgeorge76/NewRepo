@@ -1,0 +1,33 @@
+[build]
+  command   = "npm run build"
+  publish   = "dist"
+  base      = "apps/web"
+
+[build.environment]
+  NODE_VERSION = "22"
+  NPM_VERSION  = "10"
+
+# SPA fallback — all routes serve index.html
+[[redirects]]
+  from   = "/*"
+  to     = "/index.html"
+  status = 200
+
+# Netlify Functions
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# Edge functions
+[[edge_functions]]
+  path     = "/strike/*"
+  function = "geo-intercept"
+
+[headers]
+  [[headers.values]]
+    for = "/*"
+    [headers.values.values]
+      X-Frame-Options        = "DENY"
+      X-Content-Type-Options = "nosniff"
+      Referrer-Policy        = "strict-origin-when-cross-origin"
+      Permissions-Policy     = "camera=(), microphone=(), geolocation=(self)"

@@ -1,0 +1,12 @@
+{
+  "name": "J. Worden & Sons Paving",
+  "short_name": "J. Worden & Sons",
+  "description": "4th-generation asphalt paving contractor — Richmond, VA metro",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#f5a623",
+  "icons": [
+    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}

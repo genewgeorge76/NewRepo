@@ -1,0 +1,22 @@
+name: Lead Scoring
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # every hour
+  workflow_dispatch:
+
+jobs:
+  score:
+    name: Score New Leads
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install httpx anthropic
+      - run: python scripts/lead_scoring.py
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          JWORDEN_API_URL: ${{ secrets.JWORDEN_API_URL }}
+          JWORDEN_MASTER_KEY: ${{ secrets.JWORDEN_MASTER_KEY }}
