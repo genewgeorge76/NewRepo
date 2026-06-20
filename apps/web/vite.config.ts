@@ -21,10 +21,10 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          react: ['react', 'react-dom'],
-          router: ['@tanstack/react-router'],
-          leaflet: ['leaflet'],
+        manualChunks: (id: string) => {
+          if (id.includes('react-dom') || id.includes('/react/')) return 'react';
+          if (id.includes('@tanstack/react-router')) return 'router';
+          if (id.includes('leaflet')) return 'leaflet';
         },
       },
     },

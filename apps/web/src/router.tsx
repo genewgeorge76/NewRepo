@@ -2,7 +2,6 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
-  Outlet,
 } from '@tanstack/react-router';
 import { Root } from './routes/__root';
 import { HomePage } from './routes/index';
@@ -10,6 +9,11 @@ import { AboutPage } from './routes/about';
 import { ServicesPage } from './routes/services';
 import { EstimatorPage } from './routes/estimator';
 import { ContactPage } from './routes/contact';
+import { LocationsPage } from './routes/locations';
+import { LocationPageRoute } from './routes/location-page';
+import { BlogPage } from './routes/blog';
+import { BlogPostPage } from './routes/blog-post';
+import { PhotoInspectPage } from './routes/photo-inspect';
 
 const rootRoute = createRootRoute({ component: Root });
 
@@ -19,12 +23,25 @@ const servicesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/ser
 const estimatorRoute = createRoute({ getParentRoute: () => rootRoute, path: '/estimator', component: EstimatorPage });
 const contactRoute = createRoute({ getParentRoute: () => rootRoute, path: '/contact', component: ContactPage });
 
+const locationsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/locations', component: LocationsPage });
+const locationPageRoute = createRoute({ getParentRoute: () => rootRoute, path: '/locations/$slug', component: LocationPageRoute });
+
+const blogRoute = createRoute({ getParentRoute: () => rootRoute, path: '/blog', component: BlogPage });
+const blogPostRoute = createRoute({ getParentRoute: () => rootRoute, path: '/blog/$slug', component: BlogPostPage });
+
+const photoInspectRoute = createRoute({ getParentRoute: () => rootRoute, path: '/photo-inspect', component: PhotoInspectPage });
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   aboutRoute,
   servicesRoute,
   estimatorRoute,
   contactRoute,
+  locationsRoute,
+  locationPageRoute,
+  blogRoute,
+  blogPostRoute,
+  photoInspectRoute,
 ]);
 
 export const router = createRouter({

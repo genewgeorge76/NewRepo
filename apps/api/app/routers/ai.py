@@ -1,10 +1,21 @@
-from fastapi import APIRouter, HTTPException
+import base64
+import logging
+import time
+
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from ..config import settings
+from ..core.limiter import AI_LIMIT, limiter
 from ..services.ai_engine import ask_jarvis, score_bid
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix='/ai', tags=['ai'])
+
+_ALLOWED_MIME = {'image/jpeg', 'image/png', 'image/webp', 'image/gif'}
+_MAX_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
 class JarvisRequest(BaseModel):
@@ -31,3 +42,103 @@ async def bid_score_endpoint(body: BidScoreRequest):
         raise HTTPException(503, 'AI not configured — set ANTHROPIC_API_KEY')
     result = await score_bid(body.rfp_title, body.rfp_text)
     return result
+
+
+# ── GPT-4o Vision Photo Inspector ─────────────────────────────────────────────
+
+def _stub_analysis() -> dict:
+    return {
+        'damage_detected': True,
+        'severity': 'moderate',
+        'findings': [
+            {'type': 'longitudinal_cracking', 'coverage_pct': 12, 'urgency': 'address within 6 months'},
+            {'type': 'surface_oxidation', 'coverage_pct': 35, 'urgency': 'sealcoating recommended this season'},
+        ],
+        'recommended_services': ['crack_filling', 'sealcoating'],
+        'estimated_lifespan_years': 3,
+        'notes': 'Set OPENAI_API_KEY to enable real vision-based analysis. This is a demonstration response.',
+        'engine': 'stub',
+    }
+
+
+def _openai_analysis(image_bytes: bytes, mime_type: str) -> dict:
+    import json
+
+    from openai import OpenAI
+
+    client = OpenAI(api_key=settings.openai_api_key)
+
+    b64 = base64.b64encode(image_bytes).decode()
+    data_url = f'data:{mime_type};base64,{b64}'
+
+    t0 = time.monotonic()
+    response = client.chat.completions.create(
+        model='gpt-4o',
+        messages=[
+            {
+                'role': 'system',
+                'content': (
+                    'You are an expert asphalt inspector. Analyze the provided image and '
+                    'return a JSON object with: damage_detected (bool), severity '
+                    '(none/minor/moderate/severe), findings (list of {type, coverage_pct, urgency}), '
+                    'recommended_services (list), estimated_lifespan_years (int), notes (str). '
+                    'Return only valid JSON, no markdown fences.'
+                ),
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'image_url', 'image_url': {'url': data_url}},
+                    {'type': 'text', 'text': 'Inspect this asphalt surface and return your assessment.'},
+                ],
+            },
+        ],
+        max_tokens=600,
+        timeout=30,
+    )
+    latency_ms = round((time.monotonic() - t0) * 1000, 2)
+
+    text = response.choices[0].message.content or ''
+    if '```' in text:
+        text = text.split('```')[1].lstrip('json').strip()
+
+    try:
+        result = json.loads(text)
+    except Exception:
+        logger.warning('GPT-4o returned non-JSON vision response: %s', text[:300])
+        result = _stub_analysis()
+        result['engine'] = 'stub_fallback'
+        result['error'] = 'model returned non-JSON'
+        return result
+
+    result['engine'] = 'gpt-4o'
+    result['latency_ms'] = latency_ms
+    return result
+
+
+@router.post('/photo-inspect', summary='AI asphalt damage assessment from photo')
+@limiter.limit(AI_LIMIT)
+async def photo_inspect(
+    request: Request,
+    file: UploadFile = File(...),
+):
+    if file.content_type not in _ALLOWED_MIME:
+        raise HTTPException(
+            415,
+            f'Unsupported file type. Allowed: {", ".join(_ALLOWED_MIME)}',
+        )
+
+    image_bytes = await file.read()
+    if len(image_bytes) > _MAX_SIZE_BYTES:
+        raise HTTPException(413, 'Image exceeds 10 MB limit')
+
+    if settings.openai_api_key:
+        try:
+            analysis = await run_in_threadpool(_openai_analysis, image_bytes, file.content_type)
+        except Exception as exc:
+            logger.error('OpenAI vision analysis failed: %s', exc)
+            raise HTTPException(503, f'Vision analysis unavailable: {exc}') from exc
+    else:
+        analysis = _stub_analysis()
+
+    return analysis

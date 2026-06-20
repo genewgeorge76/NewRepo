@@ -3,10 +3,13 @@ from contextlib import asynccontextmanager
 import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from .config import settings
+from .core.limiter import limiter
 from .database import Base, engine
-from .routers import health, leads, ai, analytics
+from .routers import health, leads, ai, analytics, blog, payments, voice, lien_calendar, customers, crm
 
 
 @asynccontextmanager
@@ -21,11 +24,14 @@ if settings.sentry_dsn:
 app = FastAPI(
     title='J. Worden & Sons API',
     description='Platform API for jwordenasphaltpaving.com',
-    version='1.0.0',
+    version='2.0.0',
     lifespan=lifespan,
     docs_url='/docs' if settings.debug else None,
     redoc_url=None,
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -40,7 +46,16 @@ app.add_middleware(
     allow_headers=['*'],
 )
 
+# Core
 app.include_router(health.router)
 app.include_router(leads.router, prefix='/api/v1')
 app.include_router(ai.router, prefix='/api/v1')
 app.include_router(analytics.router, prefix='/api/v1')
+
+# Wave 1
+app.include_router(blog.router, prefix='/api/v1')
+app.include_router(payments.router, prefix='/api/v1')
+app.include_router(voice.router, prefix='/api/v1')
+app.include_router(lien_calendar.router, prefix='/api/v1')
+app.include_router(customers.router, prefix='/api/v1')
+app.include_router(crm.router, prefix='/api/v1')

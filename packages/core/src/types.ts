@@ -172,6 +172,7 @@ export interface LocationData {
   lat: number;
   lng: number;
   population?: number;
+  region?: string;
   metaTitle: string;
   metaDescription: string;
   h1: string;

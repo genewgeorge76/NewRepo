@@ -25,7 +25,7 @@ function save<T>(key: string, val: T) {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type Station = 'home' | 'jarvis' | 'estimate' | 'jobs' | 'crew' | 'equipment' | 'weather' | 'banking' | 'legal';
+type Station = 'home' | 'jarvis' | 'estimate' | 'jobs' | 'crew' | 'equipment' | 'weather' | 'banking' | 'legal' | 'crm' | 'lien';
 type AutoMode = 'manual' | 'hybrid' | 'auto';
 
 interface JarvisMsg { role: 'jarvis' | 'user'; text: string; }
@@ -48,6 +48,8 @@ const NAV: { id: Station; icon: string; label: string }[] = [
   { id: 'weather',   icon: '☁', label: 'Weather'   },
   { id: 'banking',   icon: '$', label: 'Banking'   },
   { id: 'legal',     icon: '§', label: 'Legal'     },
+  { id: 'crm',       icon: '◈', label: 'CRM'       },
+  { id: 'lien',      icon: '⚖', label: 'Lien Cal'  },
 ];
 
 const JOB_STATUSES: Job['status'][] = [
@@ -114,6 +116,30 @@ export default function App() {
   // Legal
   const [legalState, setLegalState] = useState('Virginia');
   const [cmdInput, setCmdInput] = useState('');
+
+  // CRM
+  const [crmLeads, setCrmLeads] = useState<Array<{
+    id: string; name: string; phone: string | null; service_type: string | null;
+    urgency: string | null; score_label: string | null; pipeline_stage: string;
+    estimated_value: number | null; created_at: string;
+  }>>([]);
+  const [crmStage, setCrmStage] = useState('');
+  const [crmLoading, setCrmLoading] = useState(false);
+
+  // Lien Calendar
+  const [lienEntries, setLienEntries] = useState<Array<{
+    id: number; customer_name: string; project_address: string; state_code: string;
+    lien_filing_deadline: string | null; preliminary_notice_deadline: string | null;
+    foreclosure_deadline: string | null; days_until_lien: number | null; is_urgent?: boolean;
+  }>>([]);
+  const [lienCalcState, setLienCalcState] = useState('VA');
+  const [lienStartDate, setLienStartDate] = useState('');
+  const [lienLastDate, setLienLastDate] = useState('');
+  const [lienCalcResult, setLienCalcResult] = useState<Record<string, unknown> | null>(null);
+  const [lienLoading, setLienLoading] = useState(false);
+
+  const API = import.meta.env.VITE_API_BASE_URL ?? '';
+  const MK = import.meta.env.VITE_MASTER_KEY ?? '';
 
   // ── Side effects ──────────────────────────────────────────────────────────
 
@@ -254,6 +280,7 @@ export default function App() {
     lbl: { fontSize:11, fontWeight:600, letterSpacing:'0.1em', textTransform:'uppercase' as const, color:'rgba(255,255,255,0.25)', display:'block', marginBottom:5 },
     row: { display:'flex', alignItems:'center', padding:'7px 10px', borderRadius:5, gap:10, borderBottom:'1px solid rgba(255,255,255,0.015)' } as React.CSSProperties,
     dot: (color: string): React.CSSProperties => ({ width:5, height:5, borderRadius:'50%', background:color, flexShrink:0 }),
+    btn: (bg: string, color: string): React.CSSProperties => ({ background:bg, color, border:'none', borderRadius:5, cursor:'pointer', fontFamily:'inherit', fontWeight:600 }),
   };
 
   const todayDecision = wxDays[0]?.decision;
@@ -314,7 +341,7 @@ export default function App() {
       <div style={{ flex:1, overflowY:'auto', display:'flex', flexDirection:'column' }}>
         {/* Header bar */}
         <div style={{ padding:'6px 18px', borderBottom:'1px solid rgba(255,255,255,0.03)', display:'flex', alignItems:'center', justifyContent:'space-between', minHeight:34, flexShrink:0 }}>
-          <div style={{ fontSize:15, fontWeight:600, color:'#e0e2e8' }}>{{ home:'Home', jarvis:'Jarvis', estimate:'New Estimate', jobs:'Jobs', crew:'Crew', equipment:'Equipment', weather:'Weather', banking:'Banking', legal:'Legal / Compliance' }[station]}</div>
+          <div style={{ fontSize:15, fontWeight:600, color:'#e0e2e8' }}>{{ home:'Home', jarvis:'Jarvis', estimate:'New Estimate', jobs:'Jobs', crew:'Crew', equipment:'Equipment', weather:'Weather', banking:'Banking', legal:'Legal / Compliance', crm:'CRM', lien:'Lien Calendar' }[station]}</div>
           <div style={{ fontSize:11, color:'rgba(255,255,255,0.1)', display:'flex', gap:12, alignItems:'center' }}>
             {todayDecision && <span style={{ color: DECISION_COLOR[todayDecision], fontWeight:700, fontSize:11 }}>PAVING: {todayDecision}</span>}
             {now.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' })}
@@ -618,6 +645,175 @@ export default function App() {
                     <span style={{ flex:1, fontSize:13, color:'rgba(255,255,255,0.25)' }}>{status}</span>
                     <span style={{ fontSize:12, color:'rgba(255,255,255,0.1)', fontVariantNumeric:'tabular-nums' }}>{sj.length} jobs</span>
                     <span style={{ fontSize:13, fontWeight:600, color:'rgba(255,255,255,0.35)', fontVariantNumeric:'tabular-nums', minWidth:90, textAlign:'right' }}>{formatDollars(tot)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── CRM ── */}
+          {station === 'crm' && (
+            <div style={{ maxWidth: 720 }}>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 14, alignItems: 'center' }}>
+                <select
+                  value={crmStage}
+                  onChange={e => setCrmStage(e.target.value)}
+                  style={{ ...S.inp, width: 180, cursor: 'pointer' }}
+                >
+                  <option value="">All Stages</option>
+                  {['new', 'contacted', 'proposal_sent', 'negotiating', 'won', 'lost'].map(s => (
+                    <option key={s} value={s}>{s.replace('_', ' ')}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => {
+                    setCrmLoading(true);
+                    const qs = crmStage ? `?pipeline_stage=${crmStage}` : '';
+                    fetch(`${API}/api/v1/crm/leads${qs}`, {
+                      headers: { 'X-Master-Key': MK },
+                    })
+                      .then(r => r.json())
+                      .then((d: { leads: typeof crmLeads }) => setCrmLeads(d.leads || []))
+                      .catch(() => {/* noop */})
+                      .finally(() => setCrmLoading(false));
+                  }}
+                  style={{ ...S.btn('#f5a623', '#000'), fontSize: 11, padding: '6px 14px' }}
+                >
+                  {crmLoading ? 'Loading…' : 'Load'}
+                </button>
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.15)' }}>
+                  {crmLeads.length} leads
+                </span>
+              </div>
+              {crmLeads.length === 0 && !crmLoading && (
+                <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12, padding: '20px 0' }}>
+                  Press Load to fetch leads from the API.
+                </div>
+              )}
+              {crmLeads.map(lead => {
+                const tierColor: Record<string, string> = { WHALE: '#3b82f6', SHARK: '#8b5cf6', FISH: '#22c55e' };
+                const color = tierColor[lead.score_label ?? ''] ?? 'rgba(255,255,255,0.08)';
+                return (
+                  <div key={lead.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 5, background: 'rgba(255,255,255,0.015)', marginBottom: 2 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                    <span style={{ flex: 1, fontSize: 13, color: 'rgba(255,255,255,0.5)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {lead.name}
+                    </span>
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.2)', textTransform: 'capitalize', whiteSpace: 'nowrap' }}>
+                      {lead.service_type ?? lead.pipeline_stage}
+                    </span>
+                    {lead.estimated_value && (
+                      <span style={{ fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,0.3)', whiteSpace: 'nowrap' }}>
+                        ${lead.estimated_value.toLocaleString()}
+                      </span>
+                    )}
+                    <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.12)', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
+                      {lead.pipeline_stage.replace('_', ' ')}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── LIEN CALENDAR ── */}
+          {station === 'lien' && (
+            <div style={{ maxWidth: 680 }}>
+              {/* Calculator */}
+              <div style={{ background: 'rgba(255,255,255,0.015)', borderRadius: 6, padding: '12px 14px', marginBottom: 14, border: '1px solid rgba(255,255,255,0.04)' }}>
+                <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#f5a623', marginBottom: 10 }}>
+                  Calculate Deadlines
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
+                  <div>
+                    <label style={S.lbl}>State</label>
+                    <input value={lienCalcState} onChange={e => setLienCalcState(e.target.value.toUpperCase())} maxLength={2} style={S.inp} placeholder="VA" />
+                  </div>
+                  <div>
+                    <label style={S.lbl}>Project Start</label>
+                    <input type="date" value={lienStartDate} onChange={e => setLienStartDate(e.target.value)} style={S.inp} />
+                  </div>
+                  <div>
+                    <label style={S.lbl}>Last Furnishing</label>
+                    <input type="date" value={lienLastDate} onChange={e => setLienLastDate(e.target.value)} style={S.inp} />
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    if (!lienStartDate || !lienLastDate) return;
+                    setLienLoading(true);
+                    fetch(`${API}/api/v1/lien/calculate`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', 'X-Master-Key': MK },
+                      body: JSON.stringify({
+                        state_code: lienCalcState,
+                        project_start_date: lienStartDate,
+                        last_furnishing_date: lienLastDate,
+                      }),
+                    })
+                      .then(r => r.json())
+                      .then((d: Record<string, unknown>) => setLienCalcResult(d))
+                      .catch(() => {/* noop */})
+                      .finally(() => setLienLoading(false));
+                  }}
+                  style={{ ...S.btn('#f5a623', '#000'), fontSize: 11, padding: '6px 14px' }}
+                >
+                  {lienLoading ? 'Calculating…' : 'Calculate'}
+                </button>
+                {lienCalcResult && (
+                  <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {([
+                      ['State', String(lienCalcResult.state_code)],
+                      ['Preliminary Notice', lienCalcResult.preliminary_notice_deadline ? new Date(String(lienCalcResult.preliminary_notice_deadline)).toLocaleDateString() : 'Not required'],
+                      ['Lien Filing Deadline', lienCalcResult.lien_filing_deadline ? new Date(String(lienCalcResult.lien_filing_deadline)).toLocaleDateString() : '—'],
+                      ['Days Until Lien', String(lienCalcResult.days_until_lien_deadline ?? '—')],
+                      ['Foreclosure Deadline', lienCalcResult.foreclosure_deadline ? new Date(String(lienCalcResult.foreclosure_deadline)).toLocaleDateString() : '—'],
+                      ['Notes', String(lienCalcResult.state_notes ?? '')],
+                    ] as [string, string][]).map(([label, value]) => (
+                      <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                        <span style={{ color: 'rgba(255,255,255,0.2)', flexShrink: 0 }}>{label}</span>
+                        <span style={{ color: 'rgba(255,255,255,0.6)', textAlign: 'right' }}>{value}</span>
+                      </div>
+                    ))}
+                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.1)', marginTop: 4 }}>
+                      ⚖ Verify all deadlines with a licensed attorney.
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Tracked entries */}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 10, alignItems: 'center' }}>
+                <button
+                  onClick={() => {
+                    setLienLoading(true);
+                    fetch(`${API}/api/v1/lien/upcoming?days_ahead=60`, {
+                      headers: { 'X-Master-Key': MK },
+                    })
+                      .then(r => r.json())
+                      .then((d: { entries: typeof lienEntries }) => setLienEntries(d.entries || []))
+                      .catch(() => {/* noop */})
+                      .finally(() => setLienLoading(false));
+                  }}
+                  style={{ ...S.btn('rgba(255,255,255,0.06)', 'rgba(255,255,255,0.4)'), fontSize: 11, padding: '5px 12px' }}
+                >
+                  Load Upcoming (60 days)
+                </button>
+                {lienEntries.length > 0 && (
+                  <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.15)' }}>{lienEntries.length} entries</span>
+                )}
+              </div>
+              {lienEntries.map(entry => {
+                const urgent = entry.is_urgent || (entry.days_until_lien !== null && entry.days_until_lien <= 7);
+                return (
+                  <div key={entry.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 5, background: urgent ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.015)', marginBottom: 2, border: urgent ? '1px solid rgba(239,68,68,0.2)' : '1px solid rgba(255,255,255,0.03)' }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: urgent ? '#ef4444' : 'rgba(255,255,255,0.1)', flexShrink: 0 }} />
+                    <span style={{ flex: 1, fontSize: 13, color: 'rgba(255,255,255,0.5)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {entry.customer_name} — {entry.project_address}
+                    </span>
+                    <span style={{ fontSize: 11, color: urgent ? '#ef4444' : 'rgba(255,255,255,0.15)', whiteSpace: 'nowrap', fontWeight: urgent ? 700 : 400 }}>
+                      {entry.days_until_lien !== null ? `${entry.days_until_lien}d` : '—'} · {entry.state_code}
+                    </span>
                   </div>
                 );
               })}

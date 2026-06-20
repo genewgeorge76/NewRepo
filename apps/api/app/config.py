@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     # Claude
     anthropic_api_key: str = ''
 
+    # OpenAI (vision inspector, blog draft, voice transcription)
+    openai_api_key: str = ''
+
+    # Stripe
+    stripe_secret_key: str = ''
+    stripe_webhook_secret: str = ''
+
     # Notifications
     sendgrid_api_key: str = ''
     sendgrid_from_email: str = 'no-reply@jwordenasphaltpaving.com'

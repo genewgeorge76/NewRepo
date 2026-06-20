@@ -1,5 +1,25 @@
 # GAP ANALYSIS — Worden Standard v5 vs Source Repos
-*Generated 2026-06-20. Source repos treated as read-only.*
+*Generated 2026-06-20. Wave 1 completed 2026-06-20. Source repos treated as read-only.*
+
+---
+
+## Wave 1 — Completed 2026-06-20
+
+All 7 Tier 1 items ported at premium quality (TypeScript strict 0 errors, real error handling, no stubs where source has real logic):
+
+| # | Item | What Was Built |
+|---|---|---|
+| 1 | **51 VA location pages** | Data-driven, multi-tenant architecture. `TenantConfig` in `packages/core/src/tenant.ts`, J Worden tenant in `packages/core/src/tenants/jworden.ts`. All 51 cities, auto-generated SEO meta, JSON-LD schemas (LocalBusiness, BreadcrumbList, FAQPage). Swap tenant config to white-label for new licensee. |
+| 2 | **Stripe payments** | `apps/api/app/routers/payments.py` — checkout session creation (20% deposit), webhook signature verification, payment status. Demo mode when no key set. |
+| 3 | **Twilio voice intake** | `apps/api/app/routers/voice.py` + `services/voice_intake.py` — Whisper transcription, GPT-4o entity extraction, TwiML webhook, recording callback. SSRF protection on recording SID. |
+| 4 | **GPT-4o Vision photo inspector** | `apps/api/app/routers/ai.py` `/photo-inspect` + `AIPhotoInspector.tsx` — upload photo → severity assessment, findings table, recommended services. |
+| 5 | **Blog** | `apps/api/app/routers/blog.py` (7 endpoints + GPT-4o draft gen) + `routes/blog.tsx` + `routes/blog-post.tsx`. Fixed "Article Not Found" prerender bug with 3-state loading pattern. |
+| 6 | **Lien calendar** | `apps/api/app/services/lien_calendar.py` (13 states) + `routers/lien_calendar.py` (5 endpoints). Ops dashboard Lien Calendar station. |
+| 7 | **CRM** | `apps/api/app/routers/customers.py` (8 endpoints) + `routers/crm.py` (pipeline + funnel). Ops dashboard CRM station with stage filter and lead list. |
+
+**Architecture addition:** Multi-tenant / white-label system. `TenantConfig` interface drives location pages, NAP, branding, pricing, compliance, engineering standards, and service area across all 50 states + DC. J Worden = first tenant instance.
+
+---
 
 ## Source Repos Inventoried
 
@@ -33,7 +53,7 @@ newrepo currently has **4 router files** and **2 service modules**.
 |---|---|---|
 | `health.py` | ✅ | `/health`, liveness, readiness |
 | `leads.py` | ✅ | `/contact` POST; newrepo adds `WEB-{id}` assignment |
-| `ai.py` (partial) | 🟡 | `/jarvis` + `/bid-score` ported; **missing `/photo-inspect` (GPT-4 Vision)** |
+| `ai.py` | ✅ | `/jarvis` + `/bid-score` + `/photo-inspect` (GPT-4o Vision) |
 | `analytics.py` (partial) | 🟡 | `/summary` only; missing funnel, revenue-forecast, monthly-volume |
 
 ### 1B. Missing Routers — Categorized
@@ -54,8 +74,8 @@ newrepo currently has **4 router files** and **2 service modules**.
 #### Sales & CRM (Missing)
 | Router | Endpoints | Source |
 |---|---|---|
-| `crm.py` | 3 routes — pipeline stage CRUD, funnel counts | WordenEnterpriseOS |
-| `customers.py` | 8 routes — full CRM: create/list/get/update, service history, bulk import | WordenEnterpriseOS |
+| `crm.py` | ✅ **Ported** — pipeline stage CRUD, funnel counts | WordenEnterpriseOS |
+| `customers.py` | ✅ **Ported** — full CRM: create/list/get/update, service history, bulk import | WordenEnterpriseOS |
 | `proposals.py` | 2 routes — generate proposal, generate + queue for approval | WordenEnterpriseOS |
 | `quotes.py` | 1 route — generate priced proposal from evaluation | WordenEnterpriseOS |
 | `follow_ups.py` | 2 routes — list follow-ups, cancel task | WordenEnterpriseOS |
@@ -65,7 +85,7 @@ newrepo currently has **4 router files** and **2 service modules**.
 #### Payments (Missing)
 | Router | Endpoints | Source |
 |---|---|---|
-| `payments.py` | 3 routes — Stripe checkout session, Stripe webhook, payment status | WordenEnterpriseOS |
+| `payments.py` | ✅ **Ported** — Stripe checkout session, webhook, payment status | WordenEnterpriseOS |
 
 #### Field Operations (Missing)
 | Router | Endpoints | Source |
@@ -111,7 +131,7 @@ newrepo currently has **4 router files** and **2 service modules**.
 #### Content & SEO (Missing)
 | Router | Endpoints | Source |
 |---|---|---|
-| `blog.py` | 7 routes — list/get/create/update/publish/delete posts, AI blog draft | WordenEnterpriseOS |
+| `blog.py` | ✅ **Ported** — 7 routes: list/get/create/update/publish/delete + GPT-4o draft | WordenEnterpriseOS |
 | `seo.py` | 3 routes — city page copy, meta tags, location FAQs | WordenEnterpriseOS |
 | `schema_ld.py` | 1 route — JSON-LD LocalBusiness schema | WordenEnterpriseOS |
 | `gallery.py` | 3 routes — upload/list/delete job photos | WordenEnterpriseOS |
@@ -120,7 +140,7 @@ newrepo currently has **4 router files** and **2 service modules**.
 #### Communication (Missing)
 | Router | Endpoints | Source |
 |---|---|---|
-| `voice.py` | 3 routes — audio transcription + lead extraction, Twilio TwiML webhook, recording callback | WordenEnterpriseOS |
+| `voice.py` | ✅ **Ported** — upload transcription, TwiML webhook, recording callback (SSRF protected) | WordenEnterpriseOS |
 | `chat.py` | 3 routes — create session, history, **WebSocket `/ws/chat/{session_id}`** | WordenEnterpriseOS |
 | `public_chat.py` | 1 route — rate-limited public concierge chat (15/min) | WordenEnterpriseOS |
 | `email.py` | 3 routes — send, log, template test | WordenEnterpriseOS |
@@ -137,7 +157,7 @@ newrepo currently has **4 router files** and **2 service modules**.
 | Router | Endpoints | Source |
 |---|---|---|
 | `compliance.py` | 7 routes — 51-jurisdiction matrix, verify license, batch verify, state rules, PPE inspection | WordenEnterpriseOS |
-| `lien_calendar.py` | 4 routes — calculate deadlines, track project, upcoming, full list | WordenEnterpriseOS |
+| `lien_calendar.py` | ✅ **Ported** — 5 routes: calculate, track, upcoming, entries, states (13-state DB) | WordenEnterpriseOS |
 | `permits.py` | 6 routes — permit CRUD, national feed, state-specific feed | WordenEnterpriseOS |
 | `vdot_bids.py` | 4 routes — list/get VDOT bids, trigger scan | WordenEnterpriseOS |
 | `scc.py` | 3 routes — Virginia SCC entity verification, batch verify | WordenEnterpriseOS |
@@ -299,8 +319,8 @@ Source has **9 Celery task files**. newrepo has **0** (Celery listed in requirem
 ### Missing Pages / Routes
 | Missing | Source | SEO/Business Value |
 |---|---|---|
-| **41 Virginia location pages** (`/locations/chester`, `/locations/richmond`, etc.) | gemni-investigate, doooooone | 🔴 **Critical** — programmatic SEO engine, primary organic traffic driver |
-| **Blog** (list + post detail) | WordenEnterpriseOS | 🔴 High — domain authority, long-tail keywords |
+| **51 location pages** (`/locations`, `/locations/:slug`) | gemni-investigate, doooooone | ✅ **Ported** — data-driven multi-tenant arch; all 51 VA cities; JSON-LD schemas; white-label ready |
+| **Blog** (list + post detail) | WordenEnterpriseOS | ✅ **Ported** — prerender bug fixed; skeleton loading; BlogPosting schema |
 | **Gallery** (job photo portfolio) | WordenEnterpriseOS, gemni-investigate | 🟠 High — conversion, E-E-A-T signals |
 | **Command Center** (authenticated admin SPA) | WordenEnterpriseOS, gemni-investigate | 🟠 High — internal ops |
 | **Dispatch node** | gemni-investigate | 🟡 Medium — field ops |
@@ -317,7 +337,7 @@ Source has **9 Celery task files**. newrepo has **0** (Celery listed in requirem
 |---|---|---|
 | **Three.js 3D cross-section viewer** | WebGL drag-to-rotate Worden Standard layer diagram | gemni-investigate |
 | **Leaflet polygon drawing / MapEstimator** | Users draw project boundary on satellite map → auto sqft + estimate | gemni-investigate |
-| **AIPhotoInspector** | Upload photo → GPT-4 Vision asphalt damage assessment | WordenEnterpriseOS |
+| **AIPhotoInspector** | ✅ **Ported** — upload photo → GPT-4o Vision damage assessment + service recommendations | WordenEnterpriseOS |
 | **Before/After slider gallery** | Before/after project comparison with drag slider | gemni-investigate |
 | **Virtual foreman** | AI field guide component | gemni-investigate |
 | **Truck tracker** | Real-time truck position map | gemni-investigate, WordenEnterpriseOS |
@@ -357,14 +377,19 @@ The ops app (`apps/ops`) is the **best-ported section** — it closely mirrors t
 | Equipment tracking | ✅ | Matches source |
 | Weather (10-day GO/CAUTION/NO-GO) | ✅ | Matches source |
 | Banking / margin dashboard | ✅ | Matches source |
-| Legal / compliance (10 states) | 🟡 | Source has 12+ states; newrepo has 10 |
+| Legal / compliance (51 states) | ✅ | Full 51-state DB in `packages/core/src/legal.ts` |
 
-### Missing from ops vs source
+### Added in Wave 1
+| Station | What Was Added |
+|---|---|
+| **CRM** | Pipeline view with stage filter, lead list with tier color coding, load from API |
+| **Lien Calendar** | Inline deadline calculator (state + dates → all deadlines), upcoming entries list (60-day window) |
+
+### Still Missing from ops vs source
 | Missing | Source |
 |---|---|
 | **Real-time paving weather logic** fires from geolocation on load | wordenstandard |
 | **Dispatch view** — truck/crew assignment | wordenstandard (newer version) |
-| **51-state** legal DB (newrepo has 10 states) | wordenstandard (51 states) |
 | **Session-based auth** (4-digit PIN + HttpOnly cookie) | wordenstandard |
 | **Document upload / management** | WordenEnterpriseOS |
 | **Compaction map** station | WordenEnterpriseOS |
@@ -382,8 +407,9 @@ The ops app (`apps/ops`) is the **best-ported section** — it closely mirrors t
 | TypeScript types (20 interfaces) | ✅ | Complete |
 | Estimator + tonnage formula | ✅ | Full margin/binder/machine-health enforcement |
 | 20+ trade specs | ✅ | 20 trades across 5 categories |
-| 20 VA location data | ✅ | |
-| 10-state legal DB | 🟡 | Source has 51 states; newrepo has 10 |
+| 51 VA city configs (in `TenantConfig`) | ✅ | Multi-tenant, white-label architecture |
+| `TenantConfig` + location helpers | ✅ | New Wave 1 addition — powers all location pages |
+| 51-state legal DB | ✅ | Full `STATE_LEGAL` export |
 | Paving GO/CAUTION/NO-GO logic | ✅ | |
 
 ### @jworden/ai
@@ -453,18 +479,20 @@ Content-only assets — not code gaps per se, but strategically valuable:
 
 ## 12. CAPABILITY MATRIX SUMMARY
 
+*After Wave 1 — 2026-06-20*
+
 | Domain | Total Capabilities | Ported | Partial | Missing |
 |---|---|---|---|---|
-| API Routers | 80 | 2 | 2 | 76 |
-| API Endpoints | 120+ | ~8 | ~4 | ~110 |
-| Service Modules | 86 | 1 | 1 | 84 |
+| API Routers | 80 | **10** | 1 | 69 |
+| API Endpoints | 120+ | **~41** | ~2 | ~80 |
+| Service Modules | 86 | **3** | 1 | 82 |
 | Celery Tasks | 9 | 0 | 0 | 9 |
-| Database Models | 50+ | 5 | 0 | 45+ |
-| External Integrations | 24 | 2 | 1 | 21 |
-| Web App Routes | 30+ | 5 | 0 | 25+ |
-| UI Components | 85+ | 8 | 0 | 77+ |
-| VA Location Pages | 49 HTML + 41 React | 0 | 0 | 90 |
-| AI Capabilities | 14 | 4 | 2 | 8 |
+| Database Models | 50+ | **10** | 0 | 40+ |
+| External Integrations | 24 | **4** | 1 | 19 |
+| Web App Routes | 30+ | **10** | 0 | 20+ |
+| UI Components | 85+ | **10** | 0 | 75+ |
+| Location Pages | 51 cities (multi-tenant) | **51** | 0 | 0 |
+| AI Capabilities | 14 | **5** | 2 | 7 |
 | Netlify Functions | 6 | 2 | 0 | 4 |
 | LMS Courses | 2 | 0 | 0 | 2 |
 
