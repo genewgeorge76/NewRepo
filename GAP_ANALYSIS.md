@@ -1,5 +1,42 @@
 # GAP ANALYSIS — Worden Standard v5 vs Source Repos
-*Generated 2026-06-20. Wave 1 completed 2026-06-20. Wave 2 completed 2026-06-20. Wave 3 completed 2026-06-20. Source repos treated as read-only.*
+*Generated 2026-06-20. Wave 1 completed 2026-06-20. Wave 2 completed 2026-06-20. Wave 3 completed 2026-06-20. Wave 4 SCOPED 2026-06-20 (pending data-source confirmation). Source repos treated as read-only.*
+
+---
+
+## Wave 4 — Property Scan → Direct Mail Pipeline (SCOPED, pending confirmation)
+
+*Architecture scoped 2026-06-20. Data-source decisions required before build begins. See full scoping writeup in conversation/ROADMAP.*
+
+**Pipeline stages:**
+1. ZIP → parcel list (filtered: exclude government/school/public land-use codes)
+2. Per-property aerial imagery fetch → GPT-4o Vision roof/driveway/drainage assessment
+3. Per-property estimate via existing `packages/core` estimator + TenantConfig pricing
+4. Mailer generation (PDF per address) → batch CSV + print-ready output → direct-mail API push
+
+**Components to build (post confirmation):**
+
+| # | Component | File | Notes |
+|---|---|---|---|
+| 1 | Parcel data service | `services/parcel_service.py` | Regrid (recommended) or ATTOM; exclude land_use_code in (GOV, EDU, MUN, FED) |
+| 2 | Imagery fetcher | `services/imagery_service.py` | Nearmap API or EagleView; ToS-safe commercial license required |
+| 3 | AI vision assessor | `services/property_vision.py` | GPT-4o Vision; roof/driveway/drainage condition + severity per property |
+| 4 | Estimate generator | `services/scan_estimator.py` | Wraps `packages/core` estimator; uses sqft from parcel data + service detected |
+| 5 | Mailer generator | `services/mailer_service.py` | WeasyPrint PDF per address; Jinja2 template; condition summary + estimate + CTA |
+| 6 | Direct mail sender | `services/directmail_service.py` | Lob API (recommended); CASS address validation, postcard or letter |
+| 7 | Scan campaign router | `routers/scan_campaign.py` | POST /campaigns/scan (async, Celery), GET /campaigns/{id}/status, /results, /preview |
+| 8 | Campaign model | `models.py` additions | `ScanCampaign`, `ScanProperty`, `ScanResult` |
+| 9 | Ops UI station | `apps/ops` ScanCampaign station | ZIP input, campaign status, property result table, approve-to-mail button |
+
+**API keys required from operator:**
+- `REGRID_API_KEY` (or `ATTOM_API_KEY`) — parcel data
+- `NEARMAP_API_KEY` (or `EAGLEVIEW_API_KEY`) — aerial imagery
+- `OPENAI_API_KEY` — already present; GPT-4o Vision for assessment
+- `LOB_API_KEY` — direct mail send
+- `LOB_FROM_ADDRESS_ID` — pre-validated return address in Lob
+
+**Rough per-property cost (Regrid + Nearmap + GPT-4o + Lob letter):** ~$1.50–$2.50 scanned, ~$1.80–$3.00 per mailer sent
+
+**Status:** Awaiting operator confirmation of data-source tier (see scoping writeup). Do not build until imagery ToS is confirmed.
 
 ---
 
