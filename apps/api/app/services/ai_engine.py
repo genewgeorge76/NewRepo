@@ -1,6 +1,12 @@
-import anthropic
+"""
+ai_engine.py — Jarvis AI and bid-scoring service.
 
-from ..config import settings
+ask_jarvis() routes through the 5-provider LLM router (llm_client.py).
+score_bid() is deterministic rule-based scoring — no LLM calls.
+"""
+from __future__ import annotations
+
+from .llm_client import LLMResponse, chat as _llm_chat
 
 JARVIS_SYSTEM = """You are Jarvis — the AI field commander for J. Worden & Sons Paving & General Contracting, \
 a 4th-generation family business (est. 1984) based in Chester, VA.
@@ -25,24 +31,39 @@ BID TIERS:
 You speak like a seasoned field foreman: direct, confident, numbers-first. \
 When asked to estimate, always show: tonnage → material cost → binder → final bid at 35% margin."""
 
-DEFAULT_MODEL = 'claude-sonnet-4-6'
-FAST_MODEL = 'claude-haiku-4-5-20251001'
-
 
 async def ask_jarvis(
     messages: list[dict],
     field_mode: bool = False,
     system_override: str | None = None,
-) -> str:
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    model = FAST_MODEL if field_mode else DEFAULT_MODEL
-    response = client.messages.create(
-        model=model,
+) -> LLMResponse:
+    """Route a Jarvis chat turn through the multi-provider LLM router.
+
+    Returns LLMResponse with .text, .provider, .model, .fallback_used, .error.
+    """
+    task = 'jarvis_fast' if field_mode else 'jarvis'
+
+    # Split messages into history + last user message for the router API.
+    history: list[dict] = []
+    user_msg: str = ''
+    for m in messages:
+        role = m.get('role', '')
+        content = m.get('content', '')
+        if role in ('user', 'assistant'):
+            history.append({'role': role, 'content': content})
+
+    if history and history[-1].get('role') == 'user':
+        user_msg = history[-1]['content']
+        history = history[:-1]
+
+    return _llm_chat(
+        task=task,
+        system=system_override or JARVIS_SYSTEM,
+        user=user_msg,
+        history=history or None,
         max_tokens=1024,
-        system=system_override if system_override else JARVIS_SYSTEM,
-        messages=messages[-20:],
+        temperature=0.5,
     )
-    return response.content[0].text if response.content else ''
 
 
 async def score_bid(rfp_title: str, rfp_text: str) -> dict:
@@ -53,7 +74,6 @@ async def score_bid(rfp_title: str, rfp_text: str) -> dict:
     whale_hits = [s for s in WHALE_SIGNALS if s in text]
     shark_hits = [s for s in SHARK_SIGNALS if s in text]
 
-    # Extract dollar amounts
     import re
     amounts = [float(m.replace(',', '')) for m in re.findall(r'\$?([\d,]+(?:\.\d+)?)', rfp_text)]
     max_amount = max(amounts, default=0)

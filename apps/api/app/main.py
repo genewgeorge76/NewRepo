@@ -19,6 +19,8 @@ from .routers import (
     auth, admin_2fa, pricing, permits, vector_search, client_portal, gbp,
     # Wave 4
     scan_campaign,
+    # Wave 6
+    voice_ai,
 )
 
 
@@ -95,3 +97,6 @@ app.include_router(gbp.router, prefix='/api/v1')
 
 # Wave 4
 app.include_router(scan_campaign.router, prefix='/api/v1')
+
+# Wave 6
+app.include_router(voice_ai.router, prefix='/api/v1')

@@ -51,8 +51,24 @@ class Settings(BaseSettings):
 
     # Google (GBP, Gemini)
     gemini_api_key: str = ''
+    google_api_key: str = ''           # alias for gemini_api_key; runtime_config reads either
     gbp_oauth_token: str = ''
     gbp_location_id: str = ''          # accounts/{acc}/locations/{loc}
+
+    # Wave 6 — multi-provider LLM router
+    perplexity_api_key: str = ''       # Perplexity Sonar Pro (web research)
+    xai_api_key: str = ''              # xAI Grok 4 (social signal / X firehose)
+    jarvis_max_tier: str = 'opus'      # "opus" | "sonnet" — caps Jarvis spend
+    llm_fallback_silent: str = '1'     # "1" silently fall through on provider error
+    llm_disabled_providers: str = ''   # comma-separated provider denylist
+
+    # Wave 6 — Vapi outbound voice calling
+    vapi_api_key: str = ''
+    vapi_phone_number_id: str = ''
+    vapi_assistant_id: str = ''
+
+    # Wave 6 — autonomy state persistence
+    jarvis_autonomy_state_path: str = ''
 
     # Admin 2FA
     admin_username: str = 'admin'

@@ -11,6 +11,7 @@ from ..config import settings
 from ..core.limiter import AI_LIMIT, limiter
 from ..database import get_db
 from ..services.ai_engine import ask_jarvis, score_bid
+from ..services import llm_client as _llm
 from ..services.conversation_memory import (
     append_message, get_history, get_or_create_session,
 )
@@ -39,8 +40,9 @@ class BidScoreRequest(BaseModel):
 @router.post('/jarvis')
 @limiter.limit(AI_LIMIT)
 async def jarvis_endpoint(request: Request, body: JarvisRequest, db: Session = Depends(get_db)):
-    if not settings.anthropic_api_key:
-        raise HTTPException(503, 'AI not configured — set ANTHROPIC_API_KEY')
+    providers = _llm.provider_status()
+    if not any(providers.values()):
+        raise HTTPException(503, 'AI not configured — set ANTHROPIC_API_KEY, OPENAI_API_KEY, or another provider key')
 
     # Resolve or create session
     session_id = get_or_create_session(db, body.session_id, context='jarvis')
@@ -60,19 +62,24 @@ async def jarvis_endpoint(request: Request, body: JarvisRequest, db: Session = D
     # Build RAG-augmented system prompt
     rag_system = build_rag_system_prompt(user_question, body.state_code)
 
-    reply = await ask_jarvis(hydrated_messages, body.field_mode, system_override=rag_system)
+    result = await ask_jarvis(hydrated_messages, body.field_mode, system_override=rag_system)
+    reply = result.text or '[Jarvis is unavailable — configure a provider API key in Railway → Variables]'
 
     # Persist assistant reply
     append_message(db, session_id, 'assistant', reply)
 
-    return {'reply': reply, 'session_id': session_id}
+    return {
+        'reply': reply,
+        'session_id': session_id,
+        'provider': result.provider,
+        'model': result.model,
+        'fallback_used': result.fallback_used,
+    }
 
 
 @router.post('/bid-score')
 @limiter.limit(AI_LIMIT)
 async def bid_score_endpoint(request: Request, body: BidScoreRequest):
-    if not settings.anthropic_api_key:
-        raise HTTPException(503, 'AI not configured — set ANTHROPIC_API_KEY')
     result = await score_bid(body.rfp_title, body.rfp_text)
     return result
 
