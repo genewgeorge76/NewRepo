@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "npm run build-sitemaps && vite build",
+    "build:app": "vite build",
     "preview": "vite preview",
     "type-check": "tsc --noEmit",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "build-sitemaps": "node scripts/build-sitemaps.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.2",
