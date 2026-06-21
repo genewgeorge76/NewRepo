@@ -25,7 +25,7 @@ function save<T>(key: string, val: T) {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type Station = 'home' | 'jarvis' | 'estimate' | 'jobs' | 'crew' | 'equipment' | 'weather' | 'banking' | 'legal' | 'crm' | 'lien' | 'dispatch' | 'safety' | 'cashflow' | 'market';
+type Station = 'home' | 'jarvis' | 'estimate' | 'jobs' | 'crew' | 'equipment' | 'weather' | 'banking' | 'legal' | 'crm' | 'lien' | 'dispatch' | 'safety' | 'cashflow' | 'market' | 'workforce' | 'proposals' | 'operations' | 'subcontractors' | 'foreman' | 'permits';
 type AutoMode = 'manual' | 'hybrid' | 'auto';
 
 interface JarvisMsg { role: 'jarvis' | 'user'; text: string; }
@@ -39,21 +39,27 @@ interface WeatherDay {
 // ── Nav definition ───────────────────────────────────────────────────────────
 
 const NAV: { id: Station; icon: string; label: string }[] = [
-  { id: 'home',      icon: '◉', label: 'Home'      },
-  { id: 'jarvis',    icon: '⚡', label: 'Jarvis'    },
-  { id: 'estimate',  icon: '◇', label: 'Estimate'  },
-  { id: 'jobs',      icon: '☰', label: 'Jobs'      },
-  { id: 'crew',      icon: '◎', label: 'Crew'      },
-  { id: 'equipment', icon: '▣', label: 'Equipment' },
-  { id: 'weather',   icon: '☁', label: 'Weather'   },
-  { id: 'banking',   icon: '$', label: 'Banking'   },
-  { id: 'legal',     icon: '§', label: 'Legal'     },
-  { id: 'crm',       icon: '◈', label: 'CRM'       },
-  { id: 'lien',      icon: '⚖', label: 'Lien Cal'  },
-  { id: 'dispatch',  icon: '⌖', label: 'Dispatch'  },
-  { id: 'safety',    icon: '⛨', label: 'Safety'    },
-  { id: 'cashflow',  icon: '◎', label: 'Cash Flow' },
-  { id: 'market',    icon: '⚑', label: 'Market'    },
+  { id: 'home',          icon: '◉', label: 'Home'         },
+  { id: 'jarvis',        icon: '⚡', label: 'Jarvis'       },
+  { id: 'estimate',      icon: '◇', label: 'Estimate'     },
+  { id: 'jobs',          icon: '☰', label: 'Jobs'         },
+  { id: 'crew',          icon: '●', label: 'Crew'         },
+  { id: 'equipment',     icon: '▣', label: 'Equipment'    },
+  { id: 'weather',       icon: '☁', label: 'Weather'      },
+  { id: 'banking',       icon: '$', label: 'Banking'      },
+  { id: 'legal',         icon: '§', label: 'Legal'        },
+  { id: 'crm',           icon: '◈', label: 'CRM'          },
+  { id: 'lien',          icon: '⚖', label: 'Lien Cal'     },
+  { id: 'dispatch',      icon: '⌖', label: 'Dispatch'     },
+  { id: 'foreman',       icon: '✦', label: 'Foreman'      },
+  { id: 'workforce',     icon: '◎', label: 'Workforce'    },
+  { id: 'operations',    icon: '≡', label: 'Operations'   },
+  { id: 'subcontractors',icon: '⊞', label: 'Subs'         },
+  { id: 'safety',        icon: '⛨', label: 'Safety'       },
+  { id: 'cashflow',      icon: '⊟', label: 'Cash Flow'    },
+  { id: 'permits',       icon: '⊡', label: 'Permits'      },
+  { id: 'proposals',     icon: '✉', label: 'Proposals'    },
+  { id: 'market',        icon: '⚑', label: 'Market'       },
 ];
 
 const JOB_STATUSES: Job['status'][] = [
@@ -250,11 +256,12 @@ export default function App() {
     setJLog(p => [...p, { role: 'user', text: msg }]);
     setJBusy(true);
     try {
-      const res = await fetch('/.netlify/functions/jarvis', {
+      const res = await fetch(`${API}/api/v1/ai/jarvis`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Master-Key': MK },
         body: JSON.stringify({
           messages: [...jLog.map(m => ({ role: m.role === 'jarvis' ? 'assistant' : 'user', content: m.text })), { role: 'user', content: msg }],
+          field_mode: false,
         }),
       });
       const d = await res.json() as { reply?: string };
@@ -270,7 +277,7 @@ export default function App() {
   const execCmd = useCallback((q: string) => {
     setCmd(false);
     const c = q.replace('/', '').toLowerCase().trim();
-    const stationMap: Record<string, Station> = { home:'home', jarvis:'jarvis', estimate:'estimate', jobs:'jobs', crew:'crew', equipment:'equipment', weather:'weather', banking:'banking', legal:'legal' };
+    const stationMap: Record<string, Station> = { home:'home', jarvis:'jarvis', estimate:'estimate', jobs:'jobs', crew:'crew', equipment:'equipment', weather:'weather', banking:'banking', legal:'legal', crm:'crm', lien:'lien', dispatch:'dispatch', foreman:'foreman', workforce:'workforce', operations:'operations', subcontractors:'subcontractors', subs:'subcontractors', safety:'safety', cashflow:'cashflow', permits:'permits', proposals:'proposals', market:'market' };
     if (stationMap[c]) { setStation(stationMap[c]); return; }
     setJInput(q);
     setStation('jarvis');
@@ -345,7 +352,7 @@ export default function App() {
       <div style={{ flex:1, overflowY:'auto', display:'flex', flexDirection:'column' }}>
         {/* Header bar */}
         <div style={{ padding:'6px 18px', borderBottom:'1px solid rgba(255,255,255,0.03)', display:'flex', alignItems:'center', justifyContent:'space-between', minHeight:34, flexShrink:0 }}>
-          <div style={{ fontSize:15, fontWeight:600, color:'#e0e2e8' }}>{{ home:'Home', jarvis:'Jarvis', estimate:'New Estimate', jobs:'Jobs', crew:'Crew', equipment:'Equipment', weather:'Weather', banking:'Banking', legal:'Legal / Compliance', crm:'CRM', lien:'Lien Calendar', dispatch:'Dispatch', safety:'Safety / OSHA', cashflow:'Cash Flow', market:'Market Intelligence' }[station]}</div>
+          <div style={{ fontSize:15, fontWeight:600, color:'#e0e2e8' }}>{{ home:'Home', jarvis:'Jarvis', estimate:'New Estimate', jobs:'Jobs', crew:'Crew', equipment:'Equipment', weather:'Weather', banking:'Banking', legal:'Legal / Compliance', crm:'CRM', lien:'Lien Calendar', dispatch:'Dispatch', foreman:'Foreman Check-In', workforce:'Workforce', operations:'Operations / Work Orders', subcontractors:'Subcontractors', safety:'Safety / OSHA', cashflow:'Cash Flow', permits:'Permit Leads', proposals:'Proposals', market:'Market Intelligence' }[station]}</div>
           <div style={{ fontSize:11, color:'rgba(255,255,255,0.1)', display:'flex', gap:12, alignItems:'center' }}>
             {todayDecision && <span style={{ color: DECISION_COLOR[todayDecision], fontWeight:700, fontSize:11 }}>PAVING: {todayDecision}</span>}
             {now.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' })}
@@ -380,6 +387,24 @@ export default function App() {
                   </div>
                 ))}
               </div>
+
+              {/* Weather mini — 5-day paving forecast strip */}
+              {wxDays.length > 0 && (
+                <div
+                  onClick={() => setStation('weather')}
+                  style={{ display:'flex', gap:1, marginBottom:18, cursor:'pointer', background:'rgba(255,255,255,0.02)', borderRadius:6, overflow:'hidden' }}
+                  title="Click for full 10-day forecast"
+                >
+                  {wxDays.slice(0, 5).map((d, i) => (
+                    <div key={i} style={{ flex:1, padding:'7px 4px', textAlign:'center', background: i === 0 ? 'rgba(255,255,255,0.02)' : 'transparent' }}>
+                      <div style={{ fontSize:9, color:'rgba(255,255,255,0.2)', marginBottom:3 }}>{dayName(d.date)}</div>
+                      <div style={{ fontSize:13, marginBottom:3 }}>{wxIcon(d.code)}</div>
+                      <div style={{ fontSize:9, color:'rgba(255,255,255,0.18)', marginBottom:4 }}>{Math.round(d.high)}°</div>
+                      <div style={{ width:8, height:8, borderRadius:'50%', background: DECISION_COLOR[d.decision], margin:'0 auto', boxShadow:`0 0 4px ${DECISION_COLOR[d.decision]}` }} title={d.decision} />
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* Quick Jarvis */}
               <div style={{ display:'flex', gap:6, marginBottom:18 }}>
@@ -878,6 +903,36 @@ export default function App() {
             <MarketStation apiBase={import.meta.env.VITE_API_BASE_URL || ''} masterKey={import.meta.env.VITE_MASTER_KEY || ''} />
           )}
 
+          {/* ── WORKFORCE ── */}
+          {station === 'workforce' && (
+            <WorkforceStation apiBase={import.meta.env.VITE_API_BASE_URL || ''} masterKey={import.meta.env.VITE_MASTER_KEY || ''} />
+          )}
+
+          {/* ── PROPOSALS ── */}
+          {station === 'proposals' && (
+            <ProposalsStation apiBase={import.meta.env.VITE_API_BASE_URL || ''} masterKey={import.meta.env.VITE_MASTER_KEY || ''} />
+          )}
+
+          {/* ── OPERATIONS / WORK ORDERS ── */}
+          {station === 'operations' && (
+            <OperationsStation apiBase={import.meta.env.VITE_API_BASE_URL || ''} masterKey={import.meta.env.VITE_MASTER_KEY || ''} />
+          )}
+
+          {/* ── SUBCONTRACTORS ── */}
+          {station === 'subcontractors' && (
+            <SubcontractorsStation apiBase={import.meta.env.VITE_API_BASE_URL || ''} masterKey={import.meta.env.VITE_MASTER_KEY || ''} />
+          )}
+
+          {/* ── FOREMAN CHECK-IN ── */}
+          {station === 'foreman' && (
+            <ForemanStation apiBase={import.meta.env.VITE_API_BASE_URL || ''} masterKey={import.meta.env.VITE_MASTER_KEY || ''} />
+          )}
+
+          {/* ── PERMITS ── */}
+          {station === 'permits' && (
+            <PermitsStation apiBase={import.meta.env.VITE_API_BASE_URL || ''} masterKey={import.meta.env.VITE_MASTER_KEY || ''} />
+          )}
+
         </div>
       </div>
 
@@ -1033,6 +1088,329 @@ function CashFlowStation({ apiBase, masterKey }: StationProps) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function WorkforceStation({ apiBase, masterKey }: StationProps) {
+  const [members, setMembers] = React.useState<any[]>([]);
+  const [expiring, setExpiring] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    Promise.all([
+      fetch(`${apiBase}/api/v1/workforce/`, { headers: authHeaders(masterKey) }).then(r => r.ok ? r.json() : { members: [] }),
+      fetch(`${apiBase}/api/v1/workforce/expiring-certs?days=30`, { headers: authHeaders(masterKey) }).then(r => r.ok ? r.json() : { members: [] }),
+    ]).then(([m, e]) => { setMembers(m.members || []); setExpiring(e.members || []); })
+      .catch(() => {}).finally(() => setLoading(false));
+  }, [apiBase, masterKey]);
+
+  const statusColor = (s: string) => s === 'active' ? '#22c55e' : s === 'inactive' ? '#eab308' : 'rgba(255,255,255,0.12)';
+
+  return (
+    <div style={{ maxWidth: 720 }}>
+      {expiring.length > 0 && (
+        <div style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6, padding: '10px 14px', marginBottom: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#ef4444', marginBottom: 6 }}>⚠ {expiring.length} cert(s) expiring within 30 days</div>
+          {expiring.map((m: any) => (
+            <div key={m.id} style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', padding: '2px 0' }}>
+              {m.name} — {m.role}
+              {m.license_expiry && <span style={{ color: '#f87171', marginLeft: 8 }}>License exp: {new Date(m.license_expiry).toLocaleDateString()}</span>}
+              {m.osha_card_expiry && <span style={{ color: '#f87171', marginLeft: 8 }}>OSHA exp: {new Date(m.osha_card_expiry).toLocaleDateString()}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.12)', marginBottom: 8 }}>{members.length} workforce members</div>
+      {loading ? <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12 }}>Loading…</div> : members.length === 0 ? (
+        <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12 }}>No workforce members found.</div>
+      ) : members.map((m: any) => (
+        <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 5, background: 'rgba(255,255,255,0.015)', marginBottom: 2, border: '1px solid rgba(255,255,255,0.03)' }}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusColor(m.status), flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>{m.name}</div>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.2)' }}>{m.role} {m.skills ? `· ${JSON.parse(m.skills || '[]').slice(0, 2).join(', ')}` : ''}</div>
+          </div>
+          <span style={{ fontSize: 11, color: statusColor(m.status), textTransform: 'uppercase', letterSpacing: '0.06em' }}>{m.status}</span>
+          {m.hourly_rate && <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.18)' }}>${m.hourly_rate}/hr</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ProposalsStation({ apiBase, masterKey }: StationProps) {
+  const [proposals, setProposals] = React.useState<any[]>([]);
+  const [stats, setStats] = React.useState<any>(null);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    Promise.all([
+      fetch(`${apiBase}/api/v1/proposals/`, { headers: authHeaders(masterKey) }).then(r => r.ok ? r.json() : { proposals: [] }),
+      fetch(`${apiBase}/api/v1/proposals/win-rate`, { headers: authHeaders(masterKey) }).then(r => r.ok ? r.json() : null),
+    ]).then(([p, s]) => { setProposals(p.proposals || []); setStats(s); })
+      .catch(() => {}).finally(() => setLoading(false));
+  }, [apiBase, masterKey]);
+
+  const outcomeColor = (o: string) => o === 'won' ? '#22c55e' : o === 'lost' ? '#ef4444' : '#eab308';
+
+  return (
+    <div style={{ maxWidth: 720 }}>
+      {stats && (
+        <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+          {[
+            ['Win Rate', `${Math.round((stats.win_rate || 0) * 100)}%`],
+            ['Won', stats.won],
+            ['Lost', stats.lost],
+            ['Pending', stats.pending],
+          ].map(([l, v]) => (
+            <div key={String(l)} style={{ flex: 1, background: 'rgba(255,255,255,0.015)', borderRadius: 5, padding: '9px 12px', border: '1px solid rgba(255,255,255,0.04)' }}>
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', marginBottom: 3 }}>{l}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: l === 'Win Rate' ? '#22c55e' : '#e0e2e8' }}>{v}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.12)', marginBottom: 8 }}>{proposals.length} proposals</div>
+      {loading ? <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12 }}>Loading…</div> : proposals.length === 0 ? (
+        <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12 }}>No proposals yet.</div>
+      ) : proposals.map((p: any) => (
+        <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 5, background: 'rgba(255,255,255,0.015)', marginBottom: 2, border: '1px solid rgba(255,255,255,0.03)' }}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: outcomeColor(p.outcome || 'pending'), flexShrink: 0 }} />
+          <span style={{ flex: 1, fontSize: 13, color: 'rgba(255,255,255,0.5)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.proposal_title}</span>
+          {p.estimated_value && <span style={{ fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,0.3)', whiteSpace: 'nowrap' }}>${p.estimated_value.toLocaleString()}</span>}
+          <span style={{ fontSize: 10, color: outcomeColor(p.outcome || 'pending'), textTransform: 'uppercase', whiteSpace: 'nowrap', letterSpacing: '0.06em' }}>{p.outcome || 'pending'}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function OperationsStation({ apiBase, masterKey }: StationProps) {
+  const [wos, setWos] = React.useState<any[]>([]);
+  const [stats, setStats] = React.useState<any>(null);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    Promise.all([
+      fetch(`${apiBase}/api/v1/operations/work-orders?limit=50`, { headers: authHeaders(masterKey) }).then(r => r.ok ? r.json() : { work_orders: [] }),
+      fetch(`${apiBase}/api/v1/operations/stats`, { headers: authHeaders(masterKey) }).then(r => r.ok ? r.json() : null),
+    ]).then(([w, s]) => { setWos(w.work_orders || []); setStats(s); })
+      .catch(() => {}).finally(() => setLoading(false));
+  }, [apiBase, masterKey]);
+
+  const statusDot = (s: string) => s === 'complete' ? '#22c55e' : s === 'in_progress' ? '#f5a623' : s === 'assigned' ? '#3b82f6' : 'rgba(255,255,255,0.1)';
+
+  return (
+    <div style={{ maxWidth: 720 }}>
+      {stats && (
+        <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+          {[['Total WOs', stats.total], ['In Progress', stats.in_progress], ['Pending', stats.pending], ['Complete', stats.complete]].map(([l, v]) => (
+            <div key={String(l)} style={{ flex: 1, background: 'rgba(255,255,255,0.015)', borderRadius: 5, padding: '9px 12px', border: '1px solid rgba(255,255,255,0.04)' }}>
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', marginBottom: 3 }}>{l}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: '#e0e2e8' }}>{v ?? 0}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.12)', marginBottom: 8 }}>Work orders</div>
+      {loading ? <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12 }}>Loading…</div> : wos.length === 0 ? (
+        <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12 }}>No work orders found.</div>
+      ) : wos.map((wo: any) => (
+        <div key={wo.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 5, background: 'rgba(255,255,255,0.015)', marginBottom: 2, border: '1px solid rgba(255,255,255,0.03)' }}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusDot(wo.status), flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.55)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{wo.title}</div>
+            {wo.site_address && <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.2)' }}>{wo.site_address}</div>}
+          </div>
+          {wo.scheduled_date && <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.2)', whiteSpace: 'nowrap' }}>{new Date(wo.scheduled_date).toLocaleDateString()}</span>}
+          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{wo.status?.replace('_', ' ')}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SubcontractorsStation({ apiBase, masterKey }: StationProps) {
+  const [subs, setSubs] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    fetch(`${apiBase}/api/v1/subcontractors/?limit=50`, { headers: authHeaders(masterKey) })
+      .then(r => r.ok ? r.json() : { subcontractors: [] })
+      .then(d => setSubs(d.subcontractors || []))
+      .catch(() => {}).finally(() => setLoading(false));
+  }, [apiBase, masterKey]);
+
+  const statusColor = (s: string) => s === 'approved' ? '#22c55e' : s === 'suspended' ? '#ef4444' : '#eab308';
+
+  return (
+    <div style={{ maxWidth: 720 }}>
+      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.12)', marginBottom: 8 }}>{subs.length} subcontractors</div>
+      {loading ? <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12 }}>Loading…</div> : subs.length === 0 ? (
+        <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12 }}>No subs in directory.</div>
+      ) : subs.map((s: any) => (
+        <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 5, background: 'rgba(255,255,255,0.015)', marginBottom: 2, border: '1px solid rgba(255,255,255,0.03)' }}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusColor(s.status), flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.55)' }}>{s.company_name}</div>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.2)' }}>{s.trade_specialty} {s.contact_name ? `· ${s.contact_name}` : ''}</div>
+          </div>
+          {s.aggregate_rating != null && (
+            <span style={{ fontSize: 12, color: s.aggregate_rating >= 4 ? '#22c55e' : s.aggregate_rating >= 3 ? '#eab308' : '#ef4444', fontWeight: 600 }}>
+              {'★'.repeat(Math.round(s.aggregate_rating))} {s.aggregate_rating.toFixed(1)}
+            </span>
+          )}
+          {s.insurance_expiry && (
+            <span style={{ fontSize: 10, color: new Date(s.insurance_expiry) < new Date() ? '#ef4444' : 'rgba(255,255,255,0.15)', whiteSpace: 'nowrap' }}>
+              Ins: {new Date(s.insurance_expiry).toLocaleDateString()}
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ForemanStation({ apiBase, masterKey }: StationProps) {
+  const [activeJobs, setActiveJobs] = React.useState<any[]>([]);
+  const [notes, setNotes] = React.useState<any[]>([]);
+  const [noteInput, setNoteInput] = React.useState('');
+  const [selectedJob, setSelectedJob] = React.useState('');
+  const [loading, setLoading] = React.useState(true);
+  const [saving, setSaving] = React.useState(false);
+  const [saved, setSaved] = React.useState(false);
+
+  const S = {
+    inp: { width: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 5, color: '#e0e2e8', fontFamily: 'inherit', fontSize: 14, padding: '7px 11px', outline: 'none' } as React.CSSProperties,
+    lbl: { fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase' as const, color: 'rgba(255,255,255,0.25)', display: 'block', marginBottom: 5 },
+  };
+
+  React.useEffect(() => {
+    Promise.all([
+      fetch(`${apiBase}/api/v1/foreman/active-jobs`, { headers: authHeaders(masterKey) }).then(r => r.ok ? r.json() : { jobs: [] }),
+      fetch(`${apiBase}/api/v1/foreman/notes?limit=20`, { headers: authHeaders(masterKey) }).then(r => r.ok ? r.json() : { notes: [] }),
+    ]).then(([a, n]) => { setActiveJobs(a.jobs || []); setNotes(n.notes || []); })
+      .catch(() => {}).finally(() => setLoading(false));
+  }, [apiBase, masterKey]);
+
+  async function submitNote() {
+    if (!noteInput.trim() || !selectedJob) return;
+    setSaving(true);
+    try {
+      await fetch(`${apiBase}/api/v1/foreman/check-in`, {
+        method: 'POST',
+        headers: authHeaders(masterKey),
+        body: JSON.stringify({ job_id: selectedJob, note: noteInput, status: 'in_progress' }),
+      });
+      setNoteInput('');
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+      const n = await fetch(`${apiBase}/api/v1/foreman/notes?limit=20`, { headers: authHeaders(masterKey) }).then(r => r.json());
+      setNotes(n.notes || []);
+    } catch { /* noop */ } finally { setSaving(false); }
+  }
+
+  return (
+    <div style={{ maxWidth: 640 }}>
+      <div style={{ background: 'rgba(255,255,255,0.015)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: 6, padding: '12px 14px', marginBottom: 14 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#f5a623', marginBottom: 10 }}>Field Check-In</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div>
+            <label style={S.lbl}>Job</label>
+            <select value={selectedJob} onChange={e => setSelectedJob(e.target.value)} style={{ ...S.inp, cursor: 'pointer' }}>
+              <option value="">— select job —</option>
+              {activeJobs.map((j: any) => <option key={j.id} value={j.id}>{j.title || j.id} {j.site_address ? `· ${j.site_address}` : ''}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={S.lbl}>Progress Note</label>
+            <textarea value={noteInput} onChange={e => setNoteInput(e.target.value)} placeholder="Site conditions, progress, issues…" rows={3} style={{ ...S.inp, resize: 'vertical' }} />
+          </div>
+          <button onClick={submitNote} disabled={saving || !noteInput.trim() || !selectedJob} style={{ fontFamily: 'inherit', fontSize: 13, fontWeight: 700, padding: '7px 16px', background: saved ? '#22c55e' : saving ? 'rgba(255,255,255,0.04)' : '#f5a623', color: saving ? 'rgba(255,255,255,0.1)' : '#08090e', border: 'none', borderRadius: 5, cursor: 'pointer', alignSelf: 'flex-start' }}>
+            {saved ? '✓ Saved' : saving ? 'Saving…' : 'Check In'}
+          </button>
+        </div>
+      </div>
+      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.12)', marginBottom: 8 }}>Recent field notes</div>
+      {loading ? <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12 }}>Loading…</div> : notes.length === 0 ? (
+        <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12 }}>No notes yet.</div>
+      ) : notes.map((n: any) => (
+        <div key={n.id} style={{ padding: '8px 10px', borderRadius: 4, background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.03)', marginBottom: 3 }}>
+          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 }}>{n.note}</div>
+          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.15)', marginTop: 3 }}>{n.job_id} · {n.created_at ? new Date(n.created_at).toLocaleString() : '—'}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PermitsStation({ apiBase, masterKey }: StationProps) {
+  const [permits, setPermits] = React.useState<any[]>([]);
+  const [stats, setStats] = React.useState<any>(null);
+  const [priority, setPriority] = React.useState('');
+  const [loading, setLoading] = React.useState(true);
+  const [scanning, setScanning] = React.useState(false);
+
+  const load = React.useCallback(() => {
+    setLoading(true);
+    const qs = priority ? `?priority=${priority}` : '';
+    Promise.all([
+      fetch(`${apiBase}/api/v1/permits/${qs}&limit=50`, { headers: authHeaders(masterKey) }).then(r => r.ok ? r.json() : { permits: [] }),
+      fetch(`${apiBase}/api/v1/permits/stats`, { headers: authHeaders(masterKey) }).then(r => r.ok ? r.json() : null),
+    ]).then(([p, s]) => { setPermits(p.permits || []); setStats(s); })
+      .catch(() => {}).finally(() => setLoading(false));
+  }, [apiBase, masterKey, priority]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  async function triggerScan() {
+    setScanning(true);
+    try {
+      await fetch(`${apiBase}/api/v1/permits/scan`, { method: 'POST', headers: authHeaders(masterKey) });
+      setTimeout(() => { load(); setScanning(false); }, 2000);
+    } catch { setScanning(false); }
+  }
+
+  const labelColor = (l: string) => l === 'HOT' ? '#ef4444' : l === 'WARM' ? '#f5a623' : 'rgba(255,255,255,0.25)';
+
+  return (
+    <div style={{ maxWidth: 720 }}>
+      {stats && (
+        <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+          {[['Total', stats.total], ['HOT', stats.hot], ['WARM', stats.warm], ['COOL', stats.cool]].map(([l, v]) => (
+            <div key={String(l)} style={{ flex: 1, background: 'rgba(255,255,255,0.015)', borderRadius: 5, padding: '9px 12px', border: `1px solid ${l === 'HOT' ? 'rgba(239,68,68,0.2)' : l === 'WARM' ? 'rgba(245,166,35,0.15)' : 'rgba(255,255,255,0.04)'}` }}>
+              <div style={{ fontSize: 10, color: l === 'HOT' ? '#ef4444' : l === 'WARM' ? '#f5a623' : 'rgba(255,255,255,0.2)', marginBottom: 3 }}>{l}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: '#e0e2e8' }}>{v ?? 0}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
+        <select value={priority} onChange={e => setPriority(e.target.value)} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 5, color: '#e0e2e8', fontFamily: 'inherit', fontSize: 12, padding: '5px 8px', outline: 'none', cursor: 'pointer' }}>
+          <option value="">All priorities</option>
+          <option value="HOT">HOT</option>
+          <option value="WARM">WARM</option>
+          <option value="COOL">COOL</option>
+        </select>
+        <button onClick={triggerScan} disabled={scanning} style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, padding: '5px 12px', background: scanning ? 'rgba(255,255,255,0.03)' : 'rgba(245,166,35,0.08)', color: scanning ? 'rgba(255,255,255,0.2)' : '#f5a623', border: '1px solid rgba(245,166,35,0.15)', borderRadius: 4, cursor: 'pointer' }}>
+          {scanning ? 'Scanning…' : '↻ Scan VPT'}
+        </button>
+        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.12)' }}>{permits.length} leads</span>
+      </div>
+      {loading ? <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12 }}>Loading…</div> : permits.length === 0 ? (
+        <div style={{ color: 'rgba(255,255,255,0.1)', fontSize: 12 }}>No permit leads. Click Scan VPT to fetch new leads.</div>
+      ) : permits.map((p: any) => (
+        <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 5, background: 'rgba(255,255,255,0.015)', marginBottom: 2, border: `1px solid ${p.priority_label === 'HOT' ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.03)'}` }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: labelColor(p.priority_label), minWidth: 36 }}>{p.priority_label}</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.property_address}{p.property_city ? `, ${p.property_city}` : ''} {p.property_state ? `${p.property_state}` : ''}</div>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.2)' }}>{p.permit_type || '—'} {p.contractor_name ? `· ${p.contractor_name}` : '· No contractor'}</div>
+          </div>
+          {p.project_value != null && <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)', whiteSpace: 'nowrap' }}>${p.project_value.toLocaleString()}</span>}
+          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.1)', whiteSpace: 'nowrap' }}>{p.priority_score}</span>
+        </div>
+      ))}
     </div>
   );
 }

@@ -34,6 +34,39 @@ export const TRADES: Record<string, TradeSpec> = {
   brick: { label: 'Brick/Block', category: 'masonry', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
   stone: { label: 'Stone Work', category: 'masonry', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
   paver: { label: 'Pavers', category: 'masonry', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  // Electrical
+  elec_rough:  { label: 'Electrical Rough-In', category: 'electrical', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  elec_panel:  { label: 'Panel Upgrade', category: 'electrical', defaultDensity: null, unit: 'unit', depthUnit: null, costLabel: '$/panel' },
+  solar:       { label: 'Solar Install', category: 'electrical', defaultDensity: null, unit: 'unit', depthUnit: null, costLabel: '$/watt' },
+  ev_charger:  { label: 'EV Charger', category: 'electrical', defaultDensity: null, unit: 'unit', depthUnit: null, costLabel: '$/unit' },
+  // Plumbing
+  plmb_rough: { label: 'Plumbing Rough-In', category: 'plumbing', defaultDensity: null, unit: 'unit', depthUnit: null, costLabel: '$/fixture' },
+  plmb_pipe:  { label: 'Re-Pipe', category: 'plumbing', defaultDensity: null, unit: 'lnft', depthUnit: null, costLabel: '$/lnft' },
+  plmb_sewer: { label: 'Sewer Line', category: 'plumbing', defaultDensity: null, unit: 'lnft', depthUnit: null, costLabel: '$/lnft' },
+  // HVAC
+  hvac_sys:  { label: 'HVAC System', category: 'hvac', defaultDensity: null, unit: 'unit', depthUnit: null, costLabel: '$/ton' },
+  hvac_duct: { label: 'Ductwork', category: 'hvac', defaultDensity: null, unit: 'lnft', depthUnit: null, costLabel: '$/lnft' },
+  // Carpentry
+  frame: { label: 'Framing', category: 'carpentry', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  deck:  { label: 'Decking', category: 'carpentry', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  trim:  { label: 'Trim Work', category: 'carpentry', defaultDensity: null, unit: 'lnft', depthUnit: null, costLabel: '$/lnft' },
+  // Painting
+  paint_in: { label: 'Interior Painting', category: 'painting', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  paint_ex: { label: 'Exterior Painting', category: 'painting', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  // Landscaping
+  land:  { label: 'Full Landscape Install', category: 'landscaping', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  fence: { label: 'Fencing', category: 'landscaping', defaultDensity: null, unit: 'lnft', depthUnit: null, costLabel: '$/lnft' },
+  tree:  { label: 'Tree Removal', category: 'landscaping', defaultDensity: null, unit: 'unit', depthUnit: null, costLabel: '$/tree' },
+  // Interior Finishes
+  drywall:   { label: 'Drywall', category: 'interior', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  floor_hw:  { label: 'Hardwood Flooring', category: 'interior', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  floor_tile:{ label: 'Tile Flooring', category: 'interior', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  insul:     { label: 'Insulation', category: 'interior', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  // Specialty
+  weld:     { label: 'Welding / Fabrication', category: 'specialty', defaultDensity: null, unit: 'hr', depthUnit: null, costLabel: '$/hr' },
+  pool:     { label: 'Pool Construction', category: 'specialty', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  epoxy:    { label: 'Epoxy Floor Coating', category: 'specialty', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  pressure: { label: 'Pressure Washing', category: 'specialty', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
 };
 
 /** Group trades by category for UI selects */

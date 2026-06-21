@@ -1,5 +1,51 @@
 # GAP ANALYSIS — Worden Standard v5 vs Source Repos
-*Generated 2026-06-20. Wave 1 completed 2026-06-20. Wave 2 completed 2026-06-20. Wave 3 completed 2026-06-20. Wave 4 SCOPED 2026-06-20 (pending data-source confirmation). Source repos treated as read-only.*
+*Generated 2026-06-20. Wave 1 completed 2026-06-20. Wave 2 completed 2026-06-20. Wave 3 completed 2026-06-20. Wave 4 SCOPED 2026-06-20 (pending data-source confirmation). Worden Standard v4 audit completed 2026-06-20 — apps/ops is now a full superset. Source repos treated as read-only.*
+
+---
+
+## Worden Standard v4 Audit — Completed 2026-06-20
+
+Full station-by-station diff of `wordenstandard` (v4) against `apps/ops`. All gaps ported. Dashboard is now a complete superset.
+
+### Station checklist
+
+| Station | v4 Status | apps/ops Before Audit | Action Taken |
+|---|---|---|---|
+| Home | ✓ | ✓ — present | Added 5-day weather forecast mini-strip with paving dots above Jarvis input |
+| Jarvis AI | ✓ | ✓ — present | Fixed endpoint: `.netlify/functions/jarvis` → `/api/v1/ai/jarvis` with field_mode + X-Master-Key |
+| Estimate | ✓ | ✓ — present | No change needed |
+| Jobs | ✓ | ✓ — present | No change needed |
+| Crew | ✓ | ✓ — present | Icon updated: `◎` → `●` |
+| Equipment | ✓ | ✓ — present | No change needed |
+| Weather | ✓ | ✓ — present | No change needed |
+| Banking | ✓ | ✓ — present | No change needed |
+| Legal | ✓ | ✓ — present | No change needed |
+| CRM | ✓ | ✓ — present | No change needed |
+| Lien Calendar | ✓ | ✓ — present | No change needed |
+| Dispatch | ✓ | ✓ — Wave 2 | No change needed |
+| Safety | ✓ | ✓ — Wave 2 | No change needed |
+| Cash Flow | ✓ | partial (icon only) | Fixed icon: `◎` → `⊟` |
+| Market | ✓ | ✓ — Wave 2 | No change needed |
+| Workforce | ✓ | **MISSING** | **Added:** full station with cert-expiry alert panel |
+| Proposals | ✓ | **MISSING** | **Added:** win/loss list with stats bar |
+| Operations | ✓ | **MISSING** | **Added:** work-order pipeline with status dots |
+| Subcontractors | ✓ | **MISSING** | **Added:** sub directory with ratings + insurance expiry |
+| Foreman | ✓ | **MISSING** | **Added:** field check-in form + notes log |
+| Permits | ✓ | **MISSING** | **Added:** HOT/WARM/COOL leads, VPT scan trigger |
+
+### Cross-cutting items ported
+
+| Item | v4 | Before | After |
+|---|---|---|---|
+| Station type union | 21 IDs | 15 IDs | 21 IDs — all added |
+| NAV array | 21 entries | 15 entries | 21 entries |
+| Header title map | 21 labels | 15 labels | 21 labels |
+| Command palette stationMap | 21 + aliases | 15 | 21 + `subs` alias |
+| Autonomy mode toggle | Manual/Hybrid/Auto | ✓ | No change needed |
+| Command palette ⌘K | ✓ | ✓ | No change needed |
+| Open-Meteo forecast | 10-day | ✓ | Mini strip added to Home |
+| TRADES | 48 types / 14 groups | 23 types | **48 types — 25 added** |
+| STATE_LEGAL | 14 states | 11 states | **14 states — SC, PA, OH added** |
 
 ---
 

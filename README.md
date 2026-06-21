@@ -66,17 +66,28 @@ Routes: Home · About · Services · Estimator · Contact · **Service Area (`/l
 - Gallery: masonry photo grid, upload with auth, lightbox, filter by project type
 - Command Center: authenticated KPI dashboard (pipeline, jobs, workforce, safety, cashflow, VDOT, gallery stats)
 
-### `apps/ops` — Worden Standard v5 Dashboard (15 stations)
-Home · Jarvis AI · Estimate · Jobs · Crew · Equipment · Weather · Banking · Legal · CRM · Lien Calendar · **Dispatch** · **Safety** · **Cash Flow** · **Market**
+### `apps/ops` — Worden Standard v5 Dashboard (21 stations)
+Home · Jarvis AI · Estimate · Jobs · Crew · Equipment · Weather · Banking · Legal · CRM · Lien Calendar · Dispatch · Safety · Cash Flow · Market · **Workforce** · **Proposals** · **Operations** · **Subcontractors** · **Foreman** · **Permits**
+
+Complete superset of Worden Standard v4 (internal ops tool). Every v4 station, feature, formula, and telemetry element is present plus Wave 1–3 additions.
 
 - Internal only — do not expose publicly
+- Autonomy mode toggle (Manual / Hybrid / Auto) — controls how much Jarvis auto-acts
+- Command palette ⌘K — instant navigation to any of 21 stations by name or alias
 - All data persisted to `localStorage` for offline field use
-- 10-day paving GO/CAUTION/NO-GO forecast via Open-Meteo
-- 51-state legal database in `packages/core/src/legal.ts`
+- 10-day paving GO/CAUTION/NO-GO forecast via Open-Meteo (mini forecast strip on Home)
+- 51-state legal database in `packages/core/src/legal.ts` (14 states fully detailed)
+- 48 trade types across 14 groups in `packages/core/src/trades.ts`
 - Dispatch: weekly schedule view, crew assignments
 - Safety: OSHA incident log, TRIR/DART rate, recent incidents
 - Cash Flow: 13-week rolling forecast with seasonal adjustments
 - Market: Seasonal demand index, VDOT bid stats by tier
+- Workforce: member list, cert expiry alerts (30-day window)
+- Proposals: win/loss tracking, win-rate stats
+- Operations: work order pipeline with status tracking
+- Subcontractors: sub directory, ratings, insurance expiry tracking
+- Foreman: field check-in form, progress notes log
+- Permits: HOT/WARM/COOL permit leads, VPT scan trigger
 
 ### `apps/api` — FastAPI Backend (120+ endpoints)
 
@@ -126,7 +137,7 @@ Pure TypeScript, zero dependencies. Exports:
 
 | Export | Description |
 |---|---|
-| `TRADES` | 20+ trade specs with density/depth/cost data |
+| `TRADES` | 48 trade specs across 14 groups (paving, concrete, sitework, roofing, masonry, electrical, plumbing, hvac, carpentry, painting, landscaping, interior, specialty) |
 | `calculateEstimate()` | 35% margin floor, binder index, machine health |
 | `pavingDecision()` | GO/CAUTION/NO-GO from weather inputs |
 | `STATE_LEGAL` | 51-state contractor legal DB (licensing, bond, lien law, prevailing wage, OSHA) |

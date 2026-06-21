@@ -101,6 +101,33 @@ export const STATE_LEGAL: Record<string, StateLegalData> = {
     osha: 'Federal OSHA applies. NYC has additional requirements.',
     continuingEducation: 'NYC license holders: continuing education required.',
   },
+  'South Carolina': {
+    licensing: 'General contractor license required for projects >$5,000. Licensed by SC LLR. Specialty trades separately licensed.',
+    bond: 'Group 4+ contractors: $15,000 surety bond required.',
+    lienLaw: 'File mechanics lien within 90 days of last furnishing. Preliminary notice required within 30 days of first furnishing.',
+    workerClassification: 'South Carolina follows IRS 20-factor test.',
+    prevailingWage: 'No state prevailing wage law. Davis-Bacon applies to federal projects.',
+    osha: 'Federal OSHA applies — no state plan.',
+    continuingEducation: 'No mandatory CE for general contractors.',
+  },
+  Pennsylvania: {
+    licensing: 'No state general contractor license required. Home Improvement Contractor registration required for residential work >$500.',
+    bond: 'Home Improvement Contractor: $50,000 bond or insurance required.',
+    lienLaw: 'File mechanics lien within 6 months of last work. Preliminary notice (Notice of Furnishing) required within first 30 days.',
+    workerClassification: 'Pennsylvania Construction Workplace Misclassification Act — strict penalties for misclassification.',
+    prevailingWage: 'Pennsylvania Prevailing Wage Act for public projects >$25,000.',
+    osha: 'Federal OSHA applies — no state plan.',
+    continuingEducation: 'No mandatory CE for general contractors.',
+  },
+  Ohio: {
+    licensing: 'No state general contractor license. Specialty trades (electrical, plumbing, HVAC) require state license. Some cities require local licenses.',
+    bond: 'Varies by trade and local jurisdiction.',
+    lienLaw: 'File mechanics lien within 60 days of last work for residential; 75 days for commercial. Subcontractors: 21-day notice requirement.',
+    workerClassification: 'Ohio follows IRS guidelines and common law test.',
+    prevailingWage: 'Ohio Prevailing Wage Law for public projects; repealed for local projects in 2017 but applies to state projects.',
+    osha: 'Federal OSHA applies — no state plan.',
+    continuingEducation: 'Trade-specific CE for licensed specialty contractors.',
+  },
 };
 
 export function getStateLegal(state: string): StateLegalData | undefined {
