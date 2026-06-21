@@ -413,3 +413,77 @@ class ProposalOutcome(Base):
     competitor_won = Column(String(200), nullable=True)
     generated_at = Column(DateTime(timezone=True), default=utcnow)
     decided_at = Column(DateTime(timezone=True), nullable=True)
+
+
+# ── Wave 3 Models ─────────────────────────────────────────────────────────────
+
+class TwoFactorSecret(Base):
+    __tablename__ = 'two_factor_secrets'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(100), nullable=False, unique=True, index=True)
+    secret = Column(String(64), nullable=False)       # base32 TOTP secret
+    backup_codes = Column(Text, nullable=True)         # JSON array of remaining codes
+    enabled = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class AuditEvent(Base):
+    __tablename__ = 'audit_events'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    actor = Column(String(100), nullable=False)       # username or 'system'
+    action = Column(String(100), nullable=False)      # e.g. 'auth.login', 'lead.delete'
+    resource_type = Column(String(60), nullable=True)
+    resource_id = Column(String(64), nullable=True)
+    detail = Column(Text, nullable=True)              # JSON extra data
+    ip_address = Column(String(45), nullable=True)    # supports IPv6
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+
+class EmailLog(Base):
+    __tablename__ = 'email_logs'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    to_email = Column(String(254), nullable=False, index=True)
+    subject = Column(String(300), nullable=False)
+    status = Column(String(20), default='pending')    # pending, sent, failed
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+    error = Column(String(300), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+
+class PermitLead(Base):
+    __tablename__ = 'permit_leads'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source = Column(String(50), nullable=False)           # vpt, deq, local
+    permit_number = Column(String(100), nullable=True, index=True)
+    permit_type = Column(String(100), nullable=True)
+    permit_status = Column(String(50), nullable=True)
+    contractor_name = Column(String(200), nullable=True)
+    contractor_license = Column(String(100), nullable=True)
+    property_address = Column(String(300), nullable=True)
+    property_city = Column(String(100), nullable=True)
+    property_state = Column(String(2), nullable=True, index=True)
+    property_zip = Column(String(10), nullable=True)
+    project_value = Column(Float, nullable=True)
+    estimated_sqft = Column(Float, nullable=True)
+    permit_date = Column(DateTime(timezone=True), nullable=True)
+    expiry_date = Column(DateTime(timezone=True), nullable=True)
+    priority_score = Column(Integer, nullable=True)       # 1–100
+    priority_label = Column(String(10), nullable=True)    # HOT, WARM, COOL
+    raw_json = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+
+class ClientPortalToken(Base):
+    __tablename__ = 'client_portal_tokens'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    customer_id = Column(Integer, ForeignKey('customers.id'), nullable=False, index=True)
+    token_hash = Column(String(128), nullable=False, index=True)   # SHA-256 of JWT jti
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), default=utcnow)

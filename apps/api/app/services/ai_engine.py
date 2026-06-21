@@ -29,13 +29,17 @@ DEFAULT_MODEL = 'claude-sonnet-4-6'
 FAST_MODEL = 'claude-haiku-4-5-20251001'
 
 
-async def ask_jarvis(messages: list[dict], field_mode: bool = False) -> str:
+async def ask_jarvis(
+    messages: list[dict],
+    field_mode: bool = False,
+    system_override: str | None = None,
+) -> str:
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
     model = FAST_MODEL if field_mode else DEFAULT_MODEL
     response = client.messages.create(
         model=model,
         max_tokens=1024,
-        system=JARVIS_SYSTEM,
+        system=system_override if system_override else JARVIS_SYSTEM,
         messages=messages[-20:],
     )
     return response.content[0].text if response.content else ''

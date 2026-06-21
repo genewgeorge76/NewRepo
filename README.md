@@ -57,7 +57,7 @@ uvicorn app.main:app --reload   # http://localhost:8000
 ## Apps
 
 ### `apps/web` — Public Website
-Routes: Home · About · Services · Estimator · Contact · **Service Area (`/locations`)** · **51 City Pages (`/locations/:slug`)** · **Blog** · **Blog Post** · **AI Photo Inspector** (`/photo-inspect`) · **Gallery** (`/gallery`) · **Command Center** (`/command-center`)
+Routes: Home · About · Services · Estimator · Contact · **Service Area (`/locations`)** · **51 City Pages (`/locations/:slug`)** · **Blog** · **Blog Post** · **AI Photo Inspector** (`/photo-inspect`) · **Gallery** (`/gallery`) · **Command Center** (`/command-center`) · **Client Portal** (`/portal`) · **Worden University** (`/lms`) · **LMS Course** (`/lms/:courseId`)
 
 - Deployed to Netlify — `netlify.toml` has SPA fallback for all routes
 - TanStack Router v1 (manual route tree)
@@ -78,37 +78,46 @@ Home · Jarvis AI · Estimate · Jobs · Crew · Equipment · Weather · Banking
 - Cash Flow: 13-week rolling forecast with seasonal adjustments
 - Market: Seasonal demand index, VDOT bid stats by tier
 
-### `apps/api` — FastAPI Backend (95+ endpoints)
+### `apps/api` — FastAPI Backend (120+ endpoints)
 
-| Router | Endpoints |
-|---|---|
-| health | `/health`, `/health/db` |
-| leads | `/api/v1/leads/contact`, list, get, update |
-| ai | `/api/v1/ai/jarvis` (w/ conversation memory), `/bid-score`, `/photo-inspect` (GPT-4o Vision) |
-| analytics | `/api/v1/analytics/summary` |
-| blog | 7 endpoints — CRUD + AI draft generation |
-| payments | 3 endpoints — Stripe checkout, webhook, status |
-| voice | 3 endpoints — upload, Twilio TwiML, recording callback |
-| lien | 5 endpoints — calculate, track, upcoming, entries, states |
-| customers | 8 endpoints — CRUD, service history, bulk import |
-| crm | 3 endpoints — leads pipeline, stage update, funnel |
-| **proposals** | 5 endpoints — AI proposal gen, CRUD, win-rate stats |
-| **operations** | 7 endpoints — work order CRUD + stats + jobs pipeline |
-| **dispatch** | 5 endpoints — schedule, assign, unassign, recommend crew, availability |
-| **foreman** | 4 endpoints — check-in, active jobs, completed today, site status |
-| **workforce** | 6 endpoints — member CRUD, expiring cert alerts |
-| **subcontractors** | 7 endpoints — sub directory, performance reviews, compliance expiry |
-| **safety** | 6 endpoints — toolbox talks (GPT-4o), incident log, OSHA rate, site score |
-| **cashflow** | 6 endpoints — entry CRUD, 13-week forecast, alert thresholds |
-| **kpi** | 1 endpoint — aggregate KPI wall (pipeline, jobs, WOs, workforce, safety, cashflow, proposals, VDOT, gallery) |
-| **vdot-bids** | 4 endpoints — list, get, stats, trigger scrape (httpx + BeautifulSoup4) |
-| **market-intelligence** | 3 endpoints — seasonal demand, state demand signals, competitor landscape |
-| **gallery** | 3 endpoints — upload (local + S3), list with filters, delete |
+| Router | Wave | Endpoints |
+|---|---|---|
+| health | core | `/health`, `/health/db` |
+| leads | core | `/api/v1/leads/contact`, list, get, update |
+| ai | core | `/api/v1/ai/jarvis` (RAG + conversation memory), `/bid-score`, `/photo-inspect` (GPT-4o Vision) |
+| analytics | core | `/api/v1/analytics/summary` |
+| blog | 1 | 7 endpoints — CRUD + AI draft generation |
+| payments | 1 | 3 endpoints — Stripe checkout, webhook, status |
+| voice | 1 | 3 endpoints — upload, Twilio TwiML, recording callback |
+| lien | 1 | 5 endpoints — calculate, track, upcoming, entries, states |
+| customers | 1 | 8 endpoints — CRUD, service history, bulk import |
+| crm | 1 | 3 endpoints — leads pipeline, stage update, funnel |
+| proposals | 2 | 5 endpoints — AI proposal gen, CRUD, win-rate stats |
+| operations | 2 | 7 endpoints — work order CRUD + stats + jobs pipeline |
+| dispatch | 2 | 5 endpoints — schedule, assign, unassign, recommend crew, availability |
+| foreman | 2 | 4 endpoints — check-in, active jobs, completed today, site status |
+| workforce | 2 | 6 endpoints — member CRUD, expiring cert alerts |
+| subcontractors | 2 | 7 endpoints — sub directory, performance reviews, compliance expiry |
+| safety | 2 | 6 endpoints — toolbox talks (GPT-4o), incident log, OSHA rate, site score |
+| cashflow | 2 | 6 endpoints — entry CRUD, 13-week forecast, alert thresholds |
+| kpi | 2 | 1 endpoint — aggregate KPI wall |
+| vdot-bids | 2 | 4 endpoints — list, get, stats, trigger scrape |
+| market-intelligence | 2 | 3 endpoints — seasonal demand, state signals, competitor landscape |
+| gallery | 2 | 3 endpoints — upload (local + S3), list with filters, delete |
+| **auth** | **3** | **3 endpoints — JWT issuance (master key + PIN), status** |
+| **admin-2fa** | **3** | **5 endpoints — TOTP setup/verify/disable/status + backup codes** |
+| **pricing** | **3** | **4 endpoints — full estimate, service catalog, state multiplier, quick-quote** |
+| **permits** | **3** | **5 endpoints — HOT/WARM/COOL permit leads, VPT scrape trigger, stats** |
+| **search** | **3** | **4 endpoints — semantic search, Pinecone status, reindex, delete** |
+| **portal** | **3** | **5 endpoints — customer email auth, me, proposals, jobs, payments** |
+| **gbp** | **3** | **4 endpoints — Gemini draft, GBP push, reviews, SMS review request** |
 
-All protected routes require `X-Master-Key` header.  
+All protected routes require `Authorization: Bearer <JWT>` or `X-Master-Key` header.  
 Rate limiting via `slowapi` — per-router limits.  
 Redis cache (in-memory fallback for dev).  
-DB-backed conversation memory — Jarvis sessions persist across requests (ChatSession + ChatMessage models).
+DB-backed conversation memory — Jarvis sessions persist across requests.  
+RAG-augmented Jarvis — 5 knowledge domains + Pinecone semantic search injected per query.  
+Celery Beat workers: VDOT scraper (07:00 ET daily), permit scraper (every 6h), cache warmer (every 5min), vector reindex (weekly).
 
 ## Packages
 

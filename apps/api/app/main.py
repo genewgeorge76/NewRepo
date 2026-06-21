@@ -15,6 +15,8 @@ from .routers import (
     # Wave 2
     proposals, operations, dispatch, foreman, workforce, subcontractors,
     safety, cashflow, kpi, vdot_bids, market_intelligence, gallery,
+    # Wave 3
+    auth, admin_2fa, pricing, permits, vector_search, client_portal, gbp,
 )
 
 
@@ -79,3 +81,12 @@ app.include_router(kpi.router, prefix='/api/v1')
 app.include_router(vdot_bids.router, prefix='/api/v1')
 app.include_router(market_intelligence.router, prefix='/api/v1')
 app.include_router(gallery.router, prefix='/api/v1')
+
+# Wave 3
+app.include_router(auth.router, prefix='/api/v1')
+app.include_router(admin_2fa.router, prefix='/api/v1')
+app.include_router(pricing.router, prefix='/api/v1')
+app.include_router(permits.router, prefix='/api/v1')
+app.include_router(vector_search.router, prefix='/api/v1')
+app.include_router(client_portal.router, prefix='/api/v1')
+app.include_router(gbp.router, prefix='/api/v1')

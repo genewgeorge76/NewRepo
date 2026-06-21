@@ -14,6 +14,7 @@ from ..services.ai_engine import ask_jarvis, score_bid
 from ..services.conversation_memory import (
     append_message, get_history, get_or_create_session,
 )
+from ..services.rag_service import build_rag_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class JarvisRequest(BaseModel):
     messages: list[dict]
     field_mode: bool = False
     session_id: str | None = None      # omit for a new session
+    state_code: str | None = None      # 2-letter state code for RAG jurisdiction context
 
 
 class BidScoreRequest(BaseModel):
@@ -47,11 +49,17 @@ async def jarvis_endpoint(body: JarvisRequest, db: Session = Depends(get_db)):
     hydrated_messages = history + body.messages
 
     # Persist incoming user turn(s)
+    user_question = ''
     for msg in body.messages:
         if msg.get('role') == 'user':
-            append_message(db, session_id, 'user', msg.get('content', ''))
+            text = msg.get('content', '')
+            append_message(db, session_id, 'user', text)
+            user_question = text  # last user message is the question for RAG
 
-    reply = await ask_jarvis(hydrated_messages, body.field_mode)
+    # Build RAG-augmented system prompt
+    rag_system = build_rag_system_prompt(user_question, body.state_code)
+
+    reply = await ask_jarvis(hydrated_messages, body.field_mode, system_override=rag_system)
 
     # Persist assistant reply
     append_message(db, session_id, 'assistant', reply)

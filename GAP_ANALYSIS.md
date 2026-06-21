@@ -1,5 +1,34 @@
 # GAP ANALYSIS — Worden Standard v5 vs Source Repos
-*Generated 2026-06-20. Wave 1 completed 2026-06-20. Wave 2 completed 2026-06-20. Source repos treated as read-only.*
+*Generated 2026-06-20. Wave 1 completed 2026-06-20. Wave 2 completed 2026-06-20. Wave 3 completed 2026-06-20. Source repos treated as read-only.*
+
+---
+
+## Wave 3 — Completed 2026-06-20
+
+19 new capabilities ported at premium quality (TypeScript strict 0 errors, real logic, multi-tenant/TenantConfig-driven):
+
+| # | Item | What Was Built |
+|---|---|---|
+| 1 | **JWT Auth** | `routers/auth.py` — `/auth/token` (master key → HS256 JWT, 24h), `/auth/pin-token` (PIN fallback), `/auth/status`. Rate-limited, audit-logged. |
+| 2 | **TOTP 2FA** | `routers/admin_2fa.py` + `services/totp_service.py` — TOTP setup/verify/disable/status + 10 one-time backup codes; `pyotp` + `qrcode` QR code data-URI |
+| 3 | **Materials Pricing Engine** | `routers/pricing.py` + `services/pricing_engine.py` — 14 service types, 50-state multipliers, $300/$600 mobilization floor, round to nearest $50. Quick-quote + service catalog endpoints. |
+| 4 | **Permit Lead Scoring** | `routers/permits.py` — HOT/WARM/COOL scoring (value, paving type, contractor presence), VPT scrape trigger, stats, list/filter by priority+state |
+| 5 | **Pinecone Vector Search** | `routers/vector_search.py` + `services/vector_search_service.py` — `text-embedding-3-small` 1536-dim, semantic blog search, full reindex, status; graceful degradation when not configured |
+| 6 | **RAG wired into Jarvis** | `services/rag_service.py` — 5 static knowledge domains (CORE, PRICING, TECHNICAL, OSHA, LEGAL) + Pinecone semantic search injected into Jarvis system prompt per question; `state_code` parameter for 51-state legal context |
+| 7 | **Client Portal** | `routers/client_portal.py` — email-based portal JWT (7-day), `/portal/auth`, `/portal/me`, `/portal/proposals`, `/portal/jobs`, `/portal/payments`. Customer-facing: full job + proposal + payment history. |
+| 8 | **Google Business Profile** | `routers/gbp.py` + `services/gbp_service.py` — Gemini 1.5 Pro post drafting, push to GBP API, reviews fetch, Twilio SMS review request; graceful stubs without credentials |
+| 9 | **SendGrid Email Service** | `services/email_service.py` — lead receipt, proposal ready, job update transactional emails; `EmailLog` model; graceful degradation |
+| 10 | **Celery + Redis** | `celery_app.py` — Celery factory, Beat schedule: VDOT daily 07:00 ET, permits every 6h, cache warmer every 5min, vector reindex weekly Sunday 02:00 |
+| 11 | **Celery Tasks** | `tasks/email_tasks.py` (retry 3×), `tasks/vdot_scraper.py` (BS4 parse), `tasks/permit_scraper.py` (VPT API), `tasks/cache_warmer.py` (KPI pre-compute), `tasks/vector_tasks.py` (Pinecone reindex) |
+| 12 | **Worden University LMS** | `routes/lms.tsx` — course catalog, progress badges, certification status. `routes/lms-course.tsx` — module viewer, 80%-pass quiz engine, certificate screen with print. 2 full courses: Asphalt Fundamentals (6 modules, 5 Q quiz) + Bidding & Business (8 modules, 8 Q quiz). localStorage persistence. |
+| 13 | **Client Portal SPA** | `routes/client-portal.tsx` — email login → JWT → proposals/jobs/payments tabs; `StatusBadge` component; auto-logout; 7-day localStorage token |
+| 14 | **Wave 3 Models** | `models.py`: `TwoFactorSecret`, `AuditEvent`, `EmailLog`, `PermitLead`, `ClientPortalToken` |
+| 15 | **Requirements updated** | `pyotp`, `qrcode[pil]`, `Pillow`, `sendgrid`, `google-generativeai`, `pinecone`, `celery`, `redis` |
+
+**Services added:** `totp_service.py`, `pricing_engine.py`, `vector_search_service.py`, `rag_service.py`, `email_service.py`, `gbp_service.py`  
+**ai.py updated:** Jarvis now injects RAG context via `build_rag_system_prompt()` on every query, with optional `state_code` for 51-state legal awareness  
+**Frontend added:** `/portal` (client portal SPA), `/lms` (Worden University), `/lms/:courseId` (course viewer + quiz + certificate)  
+**main.py updated:** All 7 Wave 3 routers registered under `/api/v1`
 
 ---
 

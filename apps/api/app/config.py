@@ -44,6 +44,27 @@ class Settings(BaseSettings):
     # VDOT scraper
     vdot_bids_url: str = 'https://www.vdot.virginia.gov/business/construction-division/advertisement/'
 
+    # Vector search / RAG
+    pinecone_api_key: str = ''
+    pinecone_index_name: str = 'worden-knowledge'
+    pinecone_environment: str = 'us-east-1-aws'
+
+    # Google (GBP, Gemini)
+    gemini_api_key: str = ''
+    gbp_oauth_token: str = ''
+    gbp_location_id: str = ''          # accounts/{acc}/locations/{loc}
+
+    # Admin 2FA
+    admin_username: str = 'admin'
+    admin_pin: str = ''                 # 4-digit PIN fallback
+    totp_issuer: str = 'WordenStandard'
+
+    # Celery
+    celery_always_eager: bool = False   # set True in dev to run tasks synchronously
+
+    # Permit scraper
+    vpt_api_url: str = 'https://permits.virginiapermit.org/api'
+
     # Monitoring
     sentry_dsn: str = ''
 
