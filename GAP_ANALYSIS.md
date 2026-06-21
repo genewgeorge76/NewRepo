@@ -1,5 +1,38 @@
 # GAP ANALYSIS — Worden Standard v5 vs Source Repos
-*Generated 2026-06-20. Wave 1 completed 2026-06-20. Wave 2 completed 2026-06-20. Wave 3 completed 2026-06-20. Wave 4 completed 2026-06-20. Worden Standard v4 audit completed 2026-06-20 — apps/ops is now a full superset. Source repos treated as read-only.*
+*Generated 2026-06-20. Wave 1 completed 2026-06-20. Wave 2 completed 2026-06-20. Wave 3 completed 2026-06-20. Wave 4 completed 2026-06-20. Wave 5 (hardening & verification) completed 2026-06-21. Worden Standard v4 audit completed 2026-06-20 — apps/ops is now a full superset. Source repos treated as read-only.*
+
+---
+
+## Wave 5 — Hardening & Verification — Completed 2026-06-21
+
+**Scope:** Security audit + fixes, automated test suite, E2E smoke tests, CI integration, go-live documentation.
+
+| # | Deliverable | Status | Notes |
+|---|---|---|---|
+| 1 | **Security review** | ✓ Done | `SECURITY_REVIEW.md` — 0 CRITICAL, 4 HIGH all fixed, 5 MEDIUM documented |
+| 2 | **HIGH fix: leads auth** | ✓ Done | `GET /leads/`, `GET /leads/{id}`, `PATCH /leads/{id}` now require `verify_premium_security` |
+| 3 | **HIGH fix: timing oracle** | ✓ Done | `auth.py` `/token` + `/pin-token` use `hmac.compare_digest()` (was bare `!=`) |
+| 4 | **HIGH fix: 2FA rate limit** | ✓ Done | `/admin/2fa/verify`, `/disable`, `/backup-verify` now `@limiter.limit('10/minute')` |
+| 5 | **HIGH fix: Twilio signature** | ✓ Done | Both webhook + recording callbacks validate `X-Twilio-Signature` via HMAC-SHA1 |
+| 6 | **SSRF fix: parcel ZIP** | ✓ Done | `parcel_service.py` validates ZIP with `^\\d{5}(-\\d{4})?$` regex before URL interpolation |
+| 7 | **Constant-time master-key** | ✓ Done | `security.py` (global) + `auth.py` (per-endpoint) both use `hmac.compare_digest` |
+| 8 | **Automated test suite** | ✓ Done | 64 pytest tests — auth, leads, pricing, scan campaigns, core services, smoke E2E |
+| 9 | **pytest-timeout** | ✓ Done | 30-second per-test timeout in `pytest.ini`; `requirements-test.txt` updated |
+| 10 | **SQLite test isolation** | ✓ Done | `StaticPool` in conftest; `scan_tasks.SessionLocal` patched; rate limiter disabled in tests |
+| 11 | **CI quality gate** | ✓ Done | `pytest` job added to `.github/workflows/quality-gate.yml` |
+| 12 | **E2E smoke test** | ✓ Done | `tests/test_smoke.py` — full pipeline in mock mode, all 64 tests pass |
+| 13 | **GO_LIVE_CHECKLIST.md** | ✓ Done | Keys, env setup, deploy steps (Netlify + Railway), Stripe + Twilio config, pre-launch manual tests |
+| 14 | **README + GAP_ANALYSIS** | ✓ Done | Wave 5 section added to both docs |
+
+**Open items (not blocking demo, required before customer data):**
+
+| # | Item | Severity | Notes |
+|---|---|---|---|
+| M1 | Startup assertion on default secrets | MEDIUM | Add `RuntimeError` in `lifespan` if `JWORDEN_MASTER_KEY == 'change-me'` in production |
+| M2 | JWT revocation (TokenBlocklist) | MEDIUM | Needed if key rotation required < 24h window |
+| M3 | Portal magic link email delivery | MEDIUM | Currently returns token directly; implement SendGrid path before enabling customer portal |
+| M4 | 2FA enforcement on main auth flow | MEDIUM | Optional enhancement — 2FA enroll works but isn't required for master-key auth |
+| L4 | Imagery ToS (Nearmap/EagleView) | LOW | Google Maps Static API not licensed for commercial prospecting at scale |
 
 ---
 

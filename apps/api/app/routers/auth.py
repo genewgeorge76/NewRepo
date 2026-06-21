@@ -1,6 +1,7 @@
 """Auth — JWT token issuance, master-key exchange, PIN fallback."""
 from __future__ import annotations
 
+import hmac
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -54,7 +55,7 @@ class PinTokenRequest(BaseModel):
 @limiter.limit('10/minute')
 async def issue_token(request: Request, body: TokenRequest, db: Session = Depends(get_db)):
     """Exchange master key for a 24-hour JWT."""
-    if body.master_key != settings.jworden_master_key:
+    if not hmac.compare_digest(body.master_key.encode(), settings.jworden_master_key.encode()):
         _log_audit(db, 'anonymous', 'auth.token.failed', request.client.host if request.client else None)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid master key')
     token = _issue_jwt('Admin')
@@ -66,7 +67,7 @@ async def issue_token(request: Request, body: TokenRequest, db: Session = Depend
 @limiter.limit('5/minute')
 async def issue_pin_token(request: Request, body: PinTokenRequest, db: Session = Depends(get_db)):
     """PIN-based auth fallback (4-digit PIN stored in ADMIN_PIN env var)."""
-    if not settings.admin_pin or body.pin != settings.admin_pin:
+    if not settings.admin_pin or not hmac.compare_digest(body.pin.encode(), settings.admin_pin.encode()):
         _log_audit(db, 'anonymous', 'auth.pin.failed', request.client.host if request.client else None)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid PIN')
     token = _issue_jwt('Admin-PIN')

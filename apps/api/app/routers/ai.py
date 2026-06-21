@@ -37,7 +37,8 @@ class BidScoreRequest(BaseModel):
 
 
 @router.post('/jarvis')
-async def jarvis_endpoint(body: JarvisRequest, db: Session = Depends(get_db)):
+@limiter.limit(AI_LIMIT)
+async def jarvis_endpoint(request: Request, body: JarvisRequest, db: Session = Depends(get_db)):
     if not settings.anthropic_api_key:
         raise HTTPException(503, 'AI not configured — set ANTHROPIC_API_KEY')
 
@@ -68,7 +69,8 @@ async def jarvis_endpoint(body: JarvisRequest, db: Session = Depends(get_db)):
 
 
 @router.post('/bid-score')
-async def bid_score_endpoint(body: BidScoreRequest):
+@limiter.limit(AI_LIMIT)
+async def bid_score_endpoint(request: Request, body: BidScoreRequest):
     if not settings.anthropic_api_key:
         raise HTTPException(503, 'AI not configured — set ANTHROPIC_API_KEY')
     result = await score_bid(body.rfp_title, body.rfp_text)

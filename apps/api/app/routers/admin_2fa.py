@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from ..core.limiter import limiter
 from ..core.security import verify_premium_security
 from ..database import get_db
 from ..models import TwoFactorSecret
@@ -16,6 +17,8 @@ from ..services.totp_service import (
 from ..config import settings
 
 router = APIRouter(prefix='/admin/2fa', tags=['admin-2fa'])
+
+_2FA_LIMIT = '10/minute'   # guard TOTP verify against brute force
 
 
 def _get_or_none(db: Session, username: str) -> TwoFactorSecret | None:
@@ -59,7 +62,8 @@ async def setup_2fa(username: str = 'admin', db: Session = Depends(get_db)):
 
 
 @router.post('/verify', dependencies=[Depends(verify_premium_security)])
-async def verify_and_enable(body: VerifyRequest, db: Session = Depends(get_db)):
+@limiter.limit(_2FA_LIMIT)
+async def verify_and_enable(request: Request, body: VerifyRequest, db: Session = Depends(get_db)):
     """Verify the first TOTP token and enable 2FA for this account."""
     rec = _get_or_none(db, body.username)
     if not rec:
@@ -72,7 +76,8 @@ async def verify_and_enable(body: VerifyRequest, db: Session = Depends(get_db)):
 
 
 @router.post('/disable', dependencies=[Depends(verify_premium_security)])
-async def disable_2fa(body: VerifyRequest, db: Session = Depends(get_db)):
+@limiter.limit(_2FA_LIMIT)
+async def disable_2fa(request: Request, body: VerifyRequest, db: Session = Depends(get_db)):
     """Disable 2FA (requires valid TOTP token to prevent lockout)."""
     rec = _get_or_none(db, body.username)
     if not rec or not rec.enabled:
@@ -99,7 +104,8 @@ async def totp_status(username: str = 'admin', db: Session = Depends(get_db)):
 
 
 @router.post('/backup-verify', dependencies=[Depends(verify_premium_security)])
-async def use_backup_code(body: BackupVerifyRequest, db: Session = Depends(get_db)):
+@limiter.limit(_2FA_LIMIT)
+async def use_backup_code(request: Request, body: BackupVerifyRequest, db: Session = Depends(get_db)):
     """Consume a backup recovery code (one-time use)."""
     rec = _get_or_none(db, body.username)
     if not rec or not rec.enabled:

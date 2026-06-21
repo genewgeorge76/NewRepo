@@ -9,7 +9,8 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from ..core.limiter import limiter
+from fastapi import Request
+from ..core.limiter import limiter, SCAN_LIMIT, SCAN_RUN_LIMIT
 from ..core.security import verify_premium_security
 from ..database import get_db
 from ..models import ScanCampaign, ScanProperty, ScanResult
@@ -91,7 +92,8 @@ def delete_campaign(campaign_id: int, db: Session = Depends(get_db)):
 # ── Run ───────────────────────────────────────────────────────────────────────
 
 @router.post('/{campaign_id}/run', dependencies=[Depends(verify_premium_security)])
-def run_campaign(campaign_id: int, db: Session = Depends(get_db)):
+@limiter.limit(SCAN_RUN_LIMIT)
+async def run_campaign(request: Request, campaign_id: int, db: Session = Depends(get_db)):
     campaign = _get_or_404(campaign_id, db)
     if campaign.status == 'running':
         raise HTTPException(status.HTTP_409_CONFLICT, detail='Campaign is already running.')

@@ -210,3 +210,20 @@ Set GitHub Actions secrets: `ANTHROPIC_API_KEY`, `JWORDEN_API_URL`, `JWORDEN_MAS
 | 🐋 Whale | Federal, USACE, VDOT, airport, highway | $500K+ |
 | 🦈 Shark | Commercial, parking lot, municipality, school | $50K–$500K |
 | 🐟 Fish | Residential driveway, patch, seal | <$50K |
+
+## Wave 5 — Hardening & Verification (complete)
+
+- **Security audit:** 0 CRITICAL, 4 HIGH findings all fixed (leads auth gap, timing-oracle on master key + PIN, 2FA rate limiting, Twilio signature validation). See `SECURITY_REVIEW.md`.
+- **Automated tests:** 64 pytest tests across auth, leads, pricing, scan campaigns, core services, and smoke pipeline. All pass with a 30-second per-test timeout. Wired into CI `quality-gate.yml`.
+- **E2E smoke test:** Full property-scan → mailer pipeline runs in demo mode with zero real API keys (8 mock parcels, mock imagery, mock Lob send, ZIP export with CSV + mailer HTMLs).
+- **Go-live checklist:** `GO_LIVE_CHECKLIST.md` — exact keys needed, env setup, Netlify + Railway deploy steps, Stripe + Twilio webhook config, and pre-launch manual test list.
+
+## Testing
+
+```bash
+cd apps/api
+pip install -r requirements.txt -r requirements-test.txt
+pytest tests/ -q          # 64 tests, ~35 seconds, no real API keys needed
+```
+
+All tests run in mock/demo mode with SQLite in-memory and no external API calls.

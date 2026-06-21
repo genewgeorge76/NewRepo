@@ -6,10 +6,13 @@ Real mode: Regrid v1 REST API; returns GeoJSON FeatureCollection.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Optional
 
 import httpx
+
+_ZIP_RE = re.compile(r'^\d{5}(-\d{4})?$')
 
 log = logging.getLogger(__name__)
 
@@ -186,11 +189,17 @@ def get_parcels_by_zip(
     With no api_key: returns mock VA parcels (gov parcel excluded automatically).
     With api_key: calls Regrid v1 API, falls back to mock on error.
     """
+    # Validate ZIP format before interpolating into external URL (SSRF prevention)
+    zip_clean = zip_code.strip()
+    if not _ZIP_RE.match(zip_clean):
+        raise ValueError(f'Invalid ZIP code: {zip_clean!r}. Expected 5-digit or ZIP+4 format.')
+    zip_clean = zip_clean[:5]  # normalise to 5-digit for API call
+
     if not api_key:
         raw = [p for p in _MOCK_PARCELS if not _should_exclude(p['land_use_code'], p['owner_name'], p['owner_type'])]
         return [ParcelRecord(**p) for p in raw[:max_results]]
 
-    url = f'https://app.regrid.com/api/v1/parcels/zip/{zip_code}.json'
+    url = f'https://app.regrid.com/api/v1/parcels/zip/{zip_clean}.json'
     try:
         resp = httpx.get(url, params={'token': api_key, 'limit': min(max_results, 500)}, timeout=30)
         resp.raise_for_status()

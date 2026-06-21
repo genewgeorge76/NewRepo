@@ -60,3 +60,23 @@ jobs:
         run: pip install -r requirements.txt
       - working-directory: apps/api
         run: python -c "from app.main import app; print('FastAPI app imports OK')"
+
+  pytest:
+    name: Python Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - working-directory: apps/api
+        run: pip install -r requirements.txt -r requirements-test.txt
+      - working-directory: apps/api
+        run: python -m pytest tests/ --timeout=30 -q
+        env:
+          DATABASE_URL: sqlite://
+          JWORDEN_MASTER_KEY: test-master-key
+          JWT_SECRET_KEY: test-jwt-secret
+          ADMIN_PIN: '1234'
+          ENVIRONMENT: test
