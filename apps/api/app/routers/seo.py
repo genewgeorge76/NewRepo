@@ -24,6 +24,7 @@ from ..services import llm_client as _llm
 from ..services import ai_foreman as _foreman
 from ..services import proof_pack as _pack
 from ..services import runtime_config as _cfg
+from ..services import search_pulse as _pulse
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +155,22 @@ async def concierge(request: Request, body: ConciergeRequest):
         'provider':   result.provider,
         'model':      result.model,
     }
+
+
+@router.get('/search-pulse', summary='Live SERP heat map for VA hotspots')
+async def search_pulse(_: dict = Depends(verify_premium_security)):
+    """
+    Returns SERP heat scores for 8 VA market hotspots across 3 search terms.
+    Cached for 5 minutes. Returns demo data when SERPAPI_KEY absent.
+    """
+    return await _pulse.snapshot(force=False)
+
+
+@router.post('/search-pulse/refresh', summary='Force-refresh the SERP heat map cache')
+@limiter.limit(AI_LIMIT)
+async def search_pulse_refresh(request: Request, _: dict = Depends(verify_premium_security)):
+    """Forces a live SerpAPI fan-out (bypasses 5-minute cache). Use sparingly."""
+    return await _pulse.snapshot(force=True)
 
 
 @router.get('/features', summary='SEO features enabled by current license tier')

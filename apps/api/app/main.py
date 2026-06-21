@@ -22,6 +22,7 @@ from .routers import (
     # Wave 6
     voice_ai,
     seo,
+    anomalies,
 )
 
 
@@ -102,3 +103,4 @@ app.include_router(scan_campaign.router, prefix='/api/v1')
 # Wave 6
 app.include_router(voice_ai.router, prefix='/api/v1')
 app.include_router(seo.router, prefix='/api/v1')
+app.include_router(anomalies.router, prefix='/api/v1')

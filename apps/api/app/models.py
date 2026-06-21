@@ -34,6 +34,7 @@ class Lead(Base):
     status = Column(String(30), default='new')
     pipeline_stage = Column(String(30), default='new')
     source = Column(String(50), nullable=True)
+    tenant_id = Column(String(64), default='default', nullable=True, index=True)
     contacted_at = Column(DateTime(timezone=True), nullable=True)
     proposal_sent_at = Column(DateTime(timezone=True), nullable=True)
     closed_at = Column(DateTime(timezone=True), nullable=True)
@@ -413,6 +414,23 @@ class ProposalOutcome(Base):
     competitor_won = Column(String(200), nullable=True)
     generated_at = Column(DateTime(timezone=True), default=utcnow)
     decided_at = Column(DateTime(timezone=True), nullable=True)
+
+
+# ── Wave 6 Models — Anomaly Detection ────────────────────────────────────────
+
+class AnomalyAlert(Base):
+    __tablename__ = 'anomaly_alerts'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    metric_name = Column(String(100), nullable=False, index=True)
+    current_value = Column(Float, nullable=False)
+    baseline_value = Column(Float, nullable=False)
+    z_score = Column(Float, nullable=False)
+    severity = Column(String(20), nullable=False)   # CRITICAL, HIGH, MEDIUM, INFO
+    message = Column(Text, nullable=False)
+    tenant_id = Column(String(64), default='default', nullable=True, index=True)
+    detected_at = Column(DateTime(timezone=True), default=utcnow)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
 
 
 # ── Wave 3 Models ─────────────────────────────────────────────────────────────
