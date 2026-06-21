@@ -1,5 +1,5 @@
 # GAP ANALYSIS — Worden Standard v5 vs Source Repos
-*Generated 2026-06-20. Wave 1 completed 2026-06-20. Wave 2 completed 2026-06-20. Wave 3 completed 2026-06-20. Wave 4 SCOPED 2026-06-20 (pending data-source confirmation). Worden Standard v4 audit completed 2026-06-20 — apps/ops is now a full superset. Source repos treated as read-only.*
+*Generated 2026-06-20. Wave 1 completed 2026-06-20. Wave 2 completed 2026-06-20. Wave 3 completed 2026-06-20. Wave 4 completed 2026-06-20. Worden Standard v4 audit completed 2026-06-20 — apps/ops is now a full superset. Source repos treated as read-only.*
 
 ---
 
@@ -49,40 +49,37 @@ Full station-by-station diff of `wordenstandard` (v4) against `apps/ops`. All ga
 
 ---
 
-## Wave 4 — Property Scan → Direct Mail Pipeline (SCOPED, pending confirmation)
+## Wave 4 — Property Scan → Direct Mail Pipeline — Completed 2026-06-20
 
-*Architecture scoped 2026-06-20. Data-source decisions required before build begins. See full scoping writeup in conversation/ROADMAP.*
+**Provider stack confirmed:** Regrid (parcel data) · Google Maps Static API (aerial imagery, v1 prototype) · GPT-4o Vision (condition assessment) · Lob (direct mail)
 
-**Pipeline stages:**
-1. ZIP → parcel list (filtered: exclude government/school/public land-use codes)
-2. Per-property aerial imagery fetch → GPT-4o Vision roof/driveway/drainage assessment
-3. Per-property estimate via existing `packages/core` estimator + TenantConfig pricing
-4. Mailer generation (PDF per address) → batch CSV + print-ready output → direct-mail API push
+**Pipeline:** ZIP → Regrid parcel fetch (government excluded) → per-property Google Maps satellite image → GPT-4o Vision assessment (roof/driveway/drainage: good/fair/poor, overall score 0–100) → pricing engine estimate → HTML mailer with DISCLAIMER → Lob letter send.
 
-**Components to build (post confirmation):**
+**Full demo/mock mode:** every provider checks for its key at runtime. Empty key = mock. Full pipeline runs end-to-end locally with no real keys — 7 synthetic VA parcels, hash-based conditions, mock Lob send.
 
-| # | Component | File | Notes |
+| # | File | Status | Notes |
 |---|---|---|---|
-| 1 | Parcel data service | `services/parcel_service.py` | Regrid (recommended) or ATTOM; exclude land_use_code in (GOV, EDU, MUN, FED) |
-| 2 | Imagery fetcher | `services/imagery_service.py` | Nearmap API or EagleView; ToS-safe commercial license required |
-| 3 | AI vision assessor | `services/property_vision.py` | GPT-4o Vision; roof/driveway/drainage condition + severity per property |
-| 4 | Estimate generator | `services/scan_estimator.py` | Wraps `packages/core` estimator; uses sqft from parcel data + service detected |
-| 5 | Mailer generator | `services/mailer_service.py` | WeasyPrint PDF per address; Jinja2 template; condition summary + estimate + CTA |
-| 6 | Direct mail sender | `services/directmail_service.py` | Lob API (recommended); CASS address validation, postcard or letter |
-| 7 | Scan campaign router | `routers/scan_campaign.py` | POST /campaigns/scan (async, Celery), GET /campaigns/{id}/status, /results, /preview |
-| 8 | Campaign model | `models.py` additions | `ScanCampaign`, `ScanProperty`, `ScanResult` |
-| 9 | Ops UI station | `apps/ops` ScanCampaign station | ZIP input, campaign status, property result table, approve-to-mail button |
+| 1 | `services/parcel_service.py` | ✓ Done | Regrid v1 REST + 7-parcel VA mock; EXCLUDED_LAND_USE + owner keyword filter |
+| 2 | `services/imagery_service.py` | ✓ Done | `ImageryProvider` protocol; `GoogleMapsProvider` (zoom 19, 640px satellite); `MockImageryProvider` |
+| 3 | `services/property_vision.py` | ✓ Done | GPT-4o Vision → `PropertyCondition` dataclass; hash-based mock for `_mock_assess()` |
+| 4 | `services/scan_estimator.py` | ✓ Done | Maps 10 service labels → `estimate_price()` with lot-fraction → `PropertyEstimate` |
+| 5 | `services/mailer_service.py` | ✓ Done | `generate_mailer_html()` (print-ready 8.5×11 HTML + bold DISCLAIMER); `send_via_lob()` + `mock_send()`; `export_campaign_zip()` |
+| 6 | `routers/scan_campaign.py` | ✓ Done | POST/GET/DELETE campaigns; POST /{id}/run (Celery or sync fallback); GET /{id}/export (ZIP download) |
+| 7 | `tasks/scan_tasks.py` | ✓ Done | `run_scan_campaign_task` Celery task; `_run_pipeline()` sync fallback; per-property error isolation |
+| 8 | `models.py` | ✓ Done | `ScanCampaign`, `ScanProperty`, `ScanResult` models |
+| 9 | `config.py` | ✓ Done | `regrid_api_key`, `google_maps_api_key`, `lob_api_key`, `lob_from_name` |
+| 10 | `apps/ops` Scan Mail station | ✓ Done | Create form (ZIP + label + max props + auto-mail toggle); campaign list with Run/Export; property detail grid with R/D/Dr condition badges + estimate ranges |
 
-**API keys required from operator:**
-- `REGRID_API_KEY` (or `ATTOM_API_KEY`) — parcel data
-- `NEARMAP_API_KEY` (or `EAGLEVIEW_API_KEY`) — aerial imagery
-- `OPENAI_API_KEY` — already present; GPT-4o Vision for assessment
-- `LOB_API_KEY` — direct mail send
-- `LOB_FROM_ADDRESS_ID` — pre-validated return address in Lob
+**API keys to go live:**
+- `REGRID_API_KEY` — Regrid account at app.regrid.com
+- `GOOGLE_MAPS_API_KEY` — Google Maps Platform (Maps Static API enabled) ⚠ review ToS before commercial use at scale; swap to Nearmap/EagleView via `ImageryProvider` protocol for production prospecting
+- `OPENAI_API_KEY` — already required; enables real GPT-4o Vision (vs. mock)
+- `LOB_API_KEY` — Lob account at lob.com
+- `LOB_FROM_NAME` — business name for mailer return address (default: "J. Worden & Sons")
 
-**Rough per-property cost (Regrid + Nearmap + GPT-4o + Lob letter):** ~$1.50–$2.50 scanned, ~$1.80–$3.00 per mailer sent
+**Rough per-property cost (live mode):** ~$0.003 Regrid + ~$0.002 Google Maps + ~$0.005–$0.01 GPT-4o + ~$0.87 Lob letter = **~$0.88–$0.89 per mailed property**
 
-**Status:** Awaiting operator confirmation of data-source tier (see scoping writeup). Do not build until imagery ToS is confirmed.
+**Legal caveats (prominently disclaimed on every mailer):** Assessments are aerial-only, preliminary, not binding quotes. Not a property inspection or appraisal. Must include opt-out mechanism per CAN-SPAM/state solicitation rules. Some states require contractor license number on mailers — add to template for applicable states.
 
 ---
 

@@ -25,7 +25,7 @@ function save<T>(key: string, val: T) {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type Station = 'home' | 'jarvis' | 'estimate' | 'jobs' | 'crew' | 'equipment' | 'weather' | 'banking' | 'legal' | 'crm' | 'lien' | 'dispatch' | 'safety' | 'cashflow' | 'market' | 'workforce' | 'proposals' | 'operations' | 'subcontractors' | 'foreman' | 'permits';
+type Station = 'home' | 'jarvis' | 'estimate' | 'jobs' | 'crew' | 'equipment' | 'weather' | 'banking' | 'legal' | 'crm' | 'lien' | 'dispatch' | 'safety' | 'cashflow' | 'market' | 'workforce' | 'proposals' | 'operations' | 'subcontractors' | 'foreman' | 'permits' | 'scan-campaign';
 type AutoMode = 'manual' | 'hybrid' | 'auto';
 
 interface JarvisMsg { role: 'jarvis' | 'user'; text: string; }
@@ -60,6 +60,7 @@ const NAV: { id: Station; icon: string; label: string }[] = [
   { id: 'permits',       icon: '⊡', label: 'Permits'      },
   { id: 'proposals',     icon: '✉', label: 'Proposals'    },
   { id: 'market',        icon: '⚑', label: 'Market'       },
+  { id: 'scan-campaign', icon: '◈', label: 'Scan Mail'    },
 ];
 
 const JOB_STATUSES: Job['status'][] = [
@@ -277,7 +278,7 @@ export default function App() {
   const execCmd = useCallback((q: string) => {
     setCmd(false);
     const c = q.replace('/', '').toLowerCase().trim();
-    const stationMap: Record<string, Station> = { home:'home', jarvis:'jarvis', estimate:'estimate', jobs:'jobs', crew:'crew', equipment:'equipment', weather:'weather', banking:'banking', legal:'legal', crm:'crm', lien:'lien', dispatch:'dispatch', foreman:'foreman', workforce:'workforce', operations:'operations', subcontractors:'subcontractors', subs:'subcontractors', safety:'safety', cashflow:'cashflow', permits:'permits', proposals:'proposals', market:'market' };
+    const stationMap: Record<string, Station> = { home:'home', jarvis:'jarvis', estimate:'estimate', jobs:'jobs', crew:'crew', equipment:'equipment', weather:'weather', banking:'banking', legal:'legal', crm:'crm', lien:'lien', dispatch:'dispatch', foreman:'foreman', workforce:'workforce', operations:'operations', subcontractors:'subcontractors', subs:'subcontractors', safety:'safety', cashflow:'cashflow', permits:'permits', proposals:'proposals', market:'market', 'scan-campaign':'scan-campaign', scan:'scan-campaign', mail:'scan-campaign' };
     if (stationMap[c]) { setStation(stationMap[c]); return; }
     setJInput(q);
     setStation('jarvis');
@@ -352,7 +353,7 @@ export default function App() {
       <div style={{ flex:1, overflowY:'auto', display:'flex', flexDirection:'column' }}>
         {/* Header bar */}
         <div style={{ padding:'6px 18px', borderBottom:'1px solid rgba(255,255,255,0.03)', display:'flex', alignItems:'center', justifyContent:'space-between', minHeight:34, flexShrink:0 }}>
-          <div style={{ fontSize:15, fontWeight:600, color:'#e0e2e8' }}>{{ home:'Home', jarvis:'Jarvis', estimate:'New Estimate', jobs:'Jobs', crew:'Crew', equipment:'Equipment', weather:'Weather', banking:'Banking', legal:'Legal / Compliance', crm:'CRM', lien:'Lien Calendar', dispatch:'Dispatch', foreman:'Foreman Check-In', workforce:'Workforce', operations:'Operations / Work Orders', subcontractors:'Subcontractors', safety:'Safety / OSHA', cashflow:'Cash Flow', permits:'Permit Leads', proposals:'Proposals', market:'Market Intelligence' }[station]}</div>
+          <div style={{ fontSize:15, fontWeight:600, color:'#e0e2e8' }}>{{ home:'Home', jarvis:'Jarvis', estimate:'New Estimate', jobs:'Jobs', crew:'Crew', equipment:'Equipment', weather:'Weather', banking:'Banking', legal:'Legal / Compliance', crm:'CRM', lien:'Lien Calendar', dispatch:'Dispatch', foreman:'Foreman Check-In', workforce:'Workforce', operations:'Operations / Work Orders', subcontractors:'Subcontractors', safety:'Safety / OSHA', cashflow:'Cash Flow', permits:'Permit Leads', proposals:'Proposals', market:'Market Intelligence', 'scan-campaign':'Scan → Mail Campaigns' }[station]}</div>
           <div style={{ fontSize:11, color:'rgba(255,255,255,0.1)', display:'flex', gap:12, alignItems:'center' }}>
             {todayDecision && <span style={{ color: DECISION_COLOR[todayDecision], fontWeight:700, fontSize:11 }}>PAVING: {todayDecision}</span>}
             {now.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' })}
@@ -933,6 +934,11 @@ export default function App() {
             <PermitsStation apiBase={import.meta.env.VITE_API_BASE_URL || ''} masterKey={import.meta.env.VITE_MASTER_KEY || ''} />
           )}
 
+          {/* ── SCAN CAMPAIGNS ── */}
+          {station === 'scan-campaign' && (
+            <ScanCampaignStation apiBase={import.meta.env.VITE_API_BASE_URL || ''} masterKey={import.meta.env.VITE_MASTER_KEY || ''} />
+          )}
+
         </div>
       </div>
 
@@ -1473,6 +1479,188 @@ function MarketStation({ apiBase, masterKey }: StationProps) {
               ))}
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScanCampaignStation({ apiBase, masterKey }: StationProps) {
+  const [campaigns, setCampaigns] = React.useState<any[]>([]);
+  const [selected, setSelected] = React.useState<any | null>(null);
+  const [zip, setZip] = React.useState('');
+  const [label, setLabel] = React.useState('');
+  const [maxProps, setMaxProps] = React.useState(25);
+  const [autoMail, setAutoMail] = React.useState(false);
+  const [loading, setLoading] = React.useState(true);
+  const [creating, setCreating] = React.useState(false);
+  const [running, setRunning] = React.useState<number | null>(null);
+  const [exporting, setExporting] = React.useState<number | null>(null);
+
+  const S = {
+    inp: { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 5, color: '#e0e2e8', fontFamily: 'inherit', fontSize: 13, padding: '6px 10px', outline: 'none' } as React.CSSProperties,
+    lbl: { fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' as const, color: 'rgba(255,255,255,0.2)', display: 'block', marginBottom: 4 },
+  };
+
+  const loadCampaigns = React.useCallback(() => {
+    setLoading(true);
+    fetch(`${apiBase}/api/v1/scan-campaigns/?limit=30`, { headers: authHeaders(masterKey) })
+      .then(r => r.ok ? r.json() : { campaigns: [] })
+      .then(d => setCampaigns(d.campaigns || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [apiBase, masterKey]);
+
+  React.useEffect(() => { loadCampaigns(); }, [loadCampaigns]);
+
+  const loadSelected = React.useCallback((id: number) => {
+    fetch(`${apiBase}/api/v1/scan-campaigns/${id}`, { headers: authHeaders(masterKey) })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setSelected(d); })
+      .catch(() => {});
+  }, [apiBase, masterKey]);
+
+  async function createCampaign() {
+    if (!zip.trim()) return;
+    setCreating(true);
+    try {
+      const r = await fetch(`${apiBase}/api/v1/scan-campaigns/`, {
+        method: 'POST', headers: authHeaders(masterKey),
+        body: JSON.stringify({ zip_code: zip.trim(), label: label || `Campaign ${zip.trim()}`, max_properties: maxProps, auto_mail: autoMail }),
+      });
+      if (r.ok) { setZip(''); setLabel(''); loadCampaigns(); }
+    } catch { /* noop */ } finally { setCreating(false); }
+  }
+
+  async function runCampaign(id: number) {
+    setRunning(id);
+    try {
+      await fetch(`${apiBase}/api/v1/scan-campaigns/${id}/run`, { method: 'POST', headers: authHeaders(masterKey) });
+      setTimeout(() => { loadCampaigns(); if (selected?.campaign?.id === id) loadSelected(id); setRunning(null); }, 2500);
+    } catch { setRunning(null); }
+  }
+
+  async function exportCampaign(id: number, zipCode: string) {
+    setExporting(id);
+    try {
+      const r = await fetch(`${apiBase}/api/v1/scan-campaigns/${id}/export`, { headers: authHeaders(masterKey) });
+      if (r.ok) {
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url;
+        a.download = `campaign_${id}_${zipCode}.zip`; a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch { /* noop */ } finally { setExporting(null); }
+  }
+
+  const statusColor = (s: string) => s === 'done' ? '#22c55e' : s === 'running' || s === 'queued' ? '#f5a623' : s === 'failed' ? '#ef4444' : 'rgba(255,255,255,0.2)';
+
+  const condColor = (c: string) => c === 'good' ? '#22c55e' : c === 'poor' ? '#ef4444' : '#eab308';
+
+  return (
+    <div style={{ maxWidth: 800 }}>
+      {/* Create form */}
+      <div style={{ background: 'rgba(255,255,255,0.015)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: 6, padding: '12px 14px', marginBottom: 16 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#f5a623', marginBottom: 10 }}>New Scan Campaign</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div>
+            <label style={S.lbl}>ZIP Code</label>
+            <input value={zip} onChange={e => setZip(e.target.value)} placeholder="23220" maxLength={10} style={{ ...S.inp, width: 90 }} />
+          </div>
+          <div style={{ flex: 1, minWidth: 140 }}>
+            <label style={S.lbl}>Label (optional)</label>
+            <input value={label} onChange={e => setLabel(e.target.value)} placeholder="Spring outreach" style={{ ...S.inp, width: '100%' }} />
+          </div>
+          <div>
+            <label style={S.lbl}>Max Properties</label>
+            <input type="number" value={maxProps} onChange={e => setMaxProps(Math.max(1, parseInt(e.target.value) || 25))} min={1} max={500} style={{ ...S.inp, width: 70 }} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingBottom: 2 }}>
+            <input type="checkbox" id="automail" checked={autoMail} onChange={e => setAutoMail(e.target.checked)} style={{ accentColor: '#f5a623', cursor: 'pointer' }} />
+            <label htmlFor="automail" style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', cursor: 'pointer' }}>Auto-mail</label>
+          </div>
+          <button onClick={createCampaign} disabled={creating || !zip.trim()} style={{ fontFamily: 'inherit', fontSize: 12, fontWeight: 700, padding: '6px 14px', background: creating ? 'rgba(255,255,255,0.03)' : '#f5a623', color: creating ? 'rgba(255,255,255,0.1)' : '#08090e', border: 'none', borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            {creating ? 'Creating…' : '+ Create'}
+          </button>
+        </div>
+        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.15)', marginTop: 6 }}>
+          Demo mode: runs full pipeline with mock parcels + mock imagery when no API keys set.
+          Auto-mail sends physical letters via Lob (mock send when LOB_API_KEY not set).
+        </div>
+      </div>
+
+      {/* Campaign list */}
+      {!selected && (
+        <>
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.12)', marginBottom: 8 }}>{campaigns.length} campaigns</div>
+          {loading ? <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.1)' }}>Loading…</div>
+            : campaigns.length === 0 ? <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.1)' }}>No campaigns yet — create one above.</div>
+            : campaigns.map((c: any) => (
+              <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 5, background: 'rgba(255,255,255,0.015)', marginBottom: 3, border: '1px solid rgba(255,255,255,0.03)', cursor: c.status === 'done' ? 'pointer' : 'default' }}
+                onClick={() => c.status === 'done' && loadSelected(c.id)}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusColor(c.status), flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.55)' }}>{c.label}</div>
+                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.2)' }}>
+                    ZIP {c.zip_code} · {c.scanned}/{c.total_properties} scanned · {c.mailed} mailed · {c.status}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {c.status === 'pending' && (
+                    <button onClick={e => { e.stopPropagation(); runCampaign(c.id); }} disabled={running === c.id} style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, padding: '4px 10px', background: running === c.id ? 'rgba(255,255,255,0.03)' : 'rgba(34,197,94,0.1)', color: running === c.id ? 'rgba(255,255,255,0.1)' : '#22c55e', border: '1px solid rgba(34,197,94,0.2)', borderRadius: 4, cursor: 'pointer' }}>
+                      {running === c.id ? 'Running…' : '▶ Run'}
+                    </button>
+                  )}
+                  {c.status === 'done' && (
+                    <button onClick={e => { e.stopPropagation(); exportCampaign(c.id, c.zip_code); }} disabled={exporting === c.id} style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 600, padding: '4px 10px', background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.3)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 4, cursor: 'pointer' }}>
+                      {exporting === c.id ? '…' : '↓ ZIP'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))
+          }
+        </>
+      )}
+
+      {/* Selected campaign detail */}
+      {selected && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+            <button onClick={() => setSelected(null)} style={{ fontFamily: 'inherit', fontSize: 11, padding: '3px 8px', background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.3)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 4, cursor: 'pointer' }}>← Back</button>
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255,255,255,0.6)' }}>{selected.campaign.label}</div>
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.2)' }}>ZIP {selected.campaign.zip_code} · {selected.properties?.length || 0} properties</span>
+            <button onClick={() => exportCampaign(selected.campaign.id, selected.campaign.zip_code)} disabled={exporting === selected.campaign.id} style={{ marginLeft: 'auto', fontFamily: 'inherit', fontSize: 11, fontWeight: 600, padding: '4px 10px', background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.3)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 4, cursor: 'pointer' }}>
+              {exporting === selected.campaign.id ? 'Exporting…' : '↓ Export ZIP'}
+            </button>
+          </div>
+          {(selected.properties || []).map((p: any) => (
+            <div key={p.id} style={{ padding: '8px 10px', borderRadius: 5, background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.03)', marginBottom: 3 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.address}{p.city ? `, ${p.city}` : ''}</div>
+                  <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)' }}>{p.owner_name} · {p.owner_type} · {p.lot_size_sqft ? `${Math.round(p.lot_size_sqft).toLocaleString()} sqft` : '—'}</div>
+                </div>
+                {p.result && (
+                  <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexShrink: 0 }}>
+                    {[['R', p.result.roof], ['D', p.result.driveway], ['Dr', p.result.drainage]].map(([abbr, cond]) => (
+                      <span key={String(abbr)} style={{ fontSize: 9, fontWeight: 700, color: condColor(String(cond)), background: `${condColor(String(cond))}18`, padding: '2px 5px', borderRadius: 3 }}>
+                        {abbr}:{String(cond).toUpperCase().slice(0, 1)}
+                      </span>
+                    ))}
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', marginLeft: 4 }}>
+                      ${p.result.estimate_low?.toLocaleString()}–${p.result.estimate_high?.toLocaleString()}
+                    </span>
+                    {p.result.mailer_sent && <span style={{ fontSize: 9, color: '#22c55e', fontWeight: 700 }}>✓ MAILED</span>}
+                  </div>
+                )}
+              </div>
+              {p.result?.narrative && (
+                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', marginTop: 4, fontStyle: 'italic', lineHeight: 1.5 }}>{p.result.narrative}</div>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </div>

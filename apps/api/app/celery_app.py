@@ -16,6 +16,7 @@ celery_app = Celery(
         'app.tasks.permit_scraper',
         'app.tasks.cache_warmer',
         'app.tasks.vector_tasks',
+        'app.tasks.scan_tasks',
     ],
 )
 

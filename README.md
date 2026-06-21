@@ -66,8 +66,8 @@ Routes: Home · About · Services · Estimator · Contact · **Service Area (`/l
 - Gallery: masonry photo grid, upload with auth, lightbox, filter by project type
 - Command Center: authenticated KPI dashboard (pipeline, jobs, workforce, safety, cashflow, VDOT, gallery stats)
 
-### `apps/ops` — Worden Standard v5 Dashboard (21 stations)
-Home · Jarvis AI · Estimate · Jobs · Crew · Equipment · Weather · Banking · Legal · CRM · Lien Calendar · Dispatch · Safety · Cash Flow · Market · **Workforce** · **Proposals** · **Operations** · **Subcontractors** · **Foreman** · **Permits**
+### `apps/ops` — Worden Standard v5 Dashboard (22 stations)
+Home · Jarvis AI · Estimate · Jobs · Crew · Equipment · Weather · Banking · Legal · CRM · Lien Calendar · Dispatch · Safety · Cash Flow · Market · Workforce · Proposals · Operations · Subcontractors · Foreman · Permits · **Scan Mail**
 
 Complete superset of Worden Standard v4 (internal ops tool). Every v4 station, feature, formula, and telemetry element is present plus Wave 1–3 additions.
 
@@ -88,6 +88,7 @@ Complete superset of Worden Standard v4 (internal ops tool). Every v4 station, f
 - Subcontractors: sub directory, ratings, insurance expiry tracking
 - Foreman: field check-in form, progress notes log
 - Permits: HOT/WARM/COOL permit leads, VPT scan trigger
+- Scan Mail: ZIP input → parcels (Regrid) → aerial imagery (Google Maps) → GPT-4o Vision assess → estimate → HTML mailer → Lob send. Full demo/mock mode — runs end-to-end with no API keys.
 
 ### `apps/api` — FastAPI Backend (120+ endpoints)
 
@@ -122,6 +123,7 @@ Complete superset of Worden Standard v4 (internal ops tool). Every v4 station, f
 | **search** | **3** | **4 endpoints — semantic search, Pinecone status, reindex, delete** |
 | **portal** | **3** | **5 endpoints — customer email auth, me, proposals, jobs, payments** |
 | **gbp** | **3** | **4 endpoints — Gemini draft, GBP push, reviews, SMS review request** |
+| **scan-campaigns** | **4** | **5 endpoints — CRUD, /run (Celery), /export (ZIP + CSV)** |
 
 All protected routes require `Authorization: Bearer <JWT>` or `X-Master-Key` header.  
 Rate limiting via `slowapi` — per-router limits.  
@@ -185,6 +187,9 @@ Constants in `packages/core/src/constants.ts`:
 | `TWILIO_FROM_NUMBER` | Outbound calls | `apps/api` |
 | `VITE_API_BASE_URL` | Web + Ops apps | `apps/web`, `apps/ops` |
 | `VITE_MASTER_KEY` | Web + Ops API calls | `apps/web`, `apps/ops` |
+| `REGRID_API_KEY` | Parcel data (Wave 4) | `apps/api` |
+| `GOOGLE_MAPS_API_KEY` | Aerial imagery (Wave 4) | `apps/api` |
+| `LOB_API_KEY` | Direct mail send (Wave 4) | `apps/api` |
 
 See `.env.example` for the full list.
 

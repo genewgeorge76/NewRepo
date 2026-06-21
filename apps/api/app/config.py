@@ -65,6 +65,12 @@ class Settings(BaseSettings):
     # Permit scraper
     vpt_api_url: str = 'https://permits.virginiapermit.org/api'
 
+    # Wave 4 — Property Scan → Direct Mail
+    regrid_api_key: str = ''          # Regrid parcel data; empty = mock mode
+    google_maps_api_key: str = ''     # Google Maps Static API (aerial imagery); empty = mock
+    lob_api_key: str = ''             # Lob direct mail; empty = mock send
+    lob_from_name: str = 'J. Worden & Sons'   # Business name for Lob "from" address
+
     # Monitoring
     sentry_dsn: str = ''
 

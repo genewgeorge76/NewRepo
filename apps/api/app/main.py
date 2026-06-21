@@ -17,6 +17,8 @@ from .routers import (
     safety, cashflow, kpi, vdot_bids, market_intelligence, gallery,
     # Wave 3
     auth, admin_2fa, pricing, permits, vector_search, client_portal, gbp,
+    # Wave 4
+    scan_campaign,
 )
 
 
@@ -90,3 +92,6 @@ app.include_router(permits.router, prefix='/api/v1')
 app.include_router(vector_search.router, prefix='/api/v1')
 app.include_router(client_portal.router, prefix='/api/v1')
 app.include_router(gbp.router, prefix='/api/v1')
+
+# Wave 4
+app.include_router(scan_campaign.router, prefix='/api/v1')

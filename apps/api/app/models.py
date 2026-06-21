@@ -487,3 +487,71 @@ class ClientPortalToken(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     revoked = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), default=utcnow)
+
+
+# ── Wave 4 Models — Property Scan → Direct Mail ───────────────────────────────
+
+class ScanCampaign(Base):
+    __tablename__ = 'scan_campaigns'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    zip_code = Column(String(10), nullable=False, index=True)
+    label = Column(String(200), nullable=False)
+    status = Column(String(30), default='pending')  # pending, queued, running, done, failed
+    max_properties = Column(Integer, default=50)
+    auto_mail = Column(Boolean, default=False)       # trigger Lob send after scan
+    total_properties = Column(Integer, default=0)
+    scanned = Column(Integer, default=0)
+    mailed = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    properties = relationship('ScanProperty', back_populates='campaign')
+
+
+class ScanProperty(Base):
+    __tablename__ = 'scan_properties'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    campaign_id = Column(Integer, ForeignKey('scan_campaigns.id'), nullable=False, index=True)
+    parcel_id = Column(String(100), nullable=True)
+    address = Column(String(300), nullable=False)
+    city = Column(String(100), nullable=True)
+    state = Column(String(50), nullable=True)
+    zip_code = Column(String(10), nullable=True)
+    owner_name = Column(String(200), nullable=True)
+    owner_type = Column(String(30), nullable=True)    # individual, corporate, trust
+    land_use_code = Column(String(50), nullable=True)
+    lot_size_sqft = Column(Float, nullable=True)
+    year_built = Column(Integer, nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    status = Column(String(30), default='pending')    # pending, scanning, scanned, mailed, skipped
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    campaign = relationship('ScanCampaign', back_populates='properties')
+    result = relationship('ScanResult', back_populates='property', uselist=False)
+
+
+class ScanResult(Base):
+    __tablename__ = 'scan_results'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    property_id = Column(Integer, ForeignKey('scan_properties.id'), nullable=False, unique=True, index=True)
+    roof_condition = Column(String(10), nullable=True)       # good | fair | poor
+    driveway_condition = Column(String(10), nullable=True)
+    drainage_condition = Column(String(10), nullable=True)
+    overall_score = Column(Integer, nullable=True)            # 0–100
+    condition_narrative = Column(Text, nullable=True)
+    services_recommended = Column(Text, nullable=True)        # JSON array
+    service_type = Column(String(100), nullable=True)         # top recommended service
+    estimated_sqft = Column(Float, nullable=True)
+    estimate_low = Column(Float, nullable=True)
+    estimate_high = Column(Float, nullable=True)
+    mailer_html = Column(Text, nullable=True)                 # full HTML for printing/Lob
+    lob_letter_id = Column(String(100), nullable=True)        # Lob ltr_... ID
+    lob_status = Column(String(50), nullable=True)            # queued, sent, failed, mock_queued
+    mailed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    property = relationship('ScanProperty', back_populates='result')
