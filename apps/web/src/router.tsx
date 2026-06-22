@@ -16,6 +16,7 @@ import { BlogPostPage } from './routes/blog-post';
 import { PhotoInspectPage } from './routes/photo-inspect';
 import { GalleryPage } from './routes/gallery';
 import { CommandCenterPage } from './routes/command-center';
+import { OSPage } from './routes/os';
 import { ClientPortalPage } from './routes/client-portal';
 import { LMSPage } from './routes/lms';
 import { LMSCoursePage } from './routes/lms-course';
@@ -37,6 +38,7 @@ const blogPostRoute = createRoute({ getParentRoute: () => rootRoute, path: '/blo
 const photoInspectRoute = createRoute({ getParentRoute: () => rootRoute, path: '/photo-inspect', component: PhotoInspectPage });
 const galleryRoute = createRoute({ getParentRoute: () => rootRoute, path: '/gallery', component: GalleryPage });
 const commandCenterRoute = createRoute({ getParentRoute: () => rootRoute, path: '/command-center', component: CommandCenterPage });
+const osRoute = createRoute({ getParentRoute: () => rootRoute, path: '/os', component: OSPage });
 const clientPortalRoute = createRoute({ getParentRoute: () => rootRoute, path: '/portal', component: ClientPortalPage });
 const lmsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/lms', component: LMSPage });
 const lmsCourseRoute = createRoute({ getParentRoute: () => rootRoute, path: '/lms/$courseId', component: LMSCoursePage });
@@ -54,6 +56,7 @@ const routeTree = rootRoute.addChildren([
   photoInspectRoute,
   galleryRoute,
   commandCenterRoute,
+  osRoute,
   clientPortalRoute,
   lmsRoute,
   lmsCourseRoute,

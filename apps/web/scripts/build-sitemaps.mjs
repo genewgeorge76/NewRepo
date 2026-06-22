@@ -320,6 +320,7 @@ Allow: /
 
 # Block private/operational routes from public crawl
 Disallow: /command-center
+Disallow: /os
 Disallow: /client-portal
 Disallow: /lms
 Disallow: /lms-course
