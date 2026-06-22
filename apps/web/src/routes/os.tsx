@@ -98,6 +98,7 @@ interface PulseHotspot {
 
 type ModuleId =
   | 'overview' | 'jarvis' | 'crm' | 'digital-twin' | 'thermal'
+  | 'onboarding' | 'finish-selections'
   | 'roller' | 'drone' | 'crew' | 'search-pulse' | 'legal'
   | 'dispatch' | 'proposals' | 'math-ai'
   | 'gantt' | 'catalog' | 'quickbooks' | 'saas' | 'bim' | 'jarvis-faces' | 'weather';
@@ -122,9 +123,11 @@ const MODULES: Module[] = [
   { id: 'catalog',       label: 'Catalog',        icon: Package,         live: true  },
   { id: 'quickbooks',    label: 'QuickBooks',     icon: BookOpen,        live: true  },
   { id: 'saas',          label: 'SaaS Admin',     icon: Building2,       live: true  },
-  { id: 'bim',           label: 'BIM / Plans',    icon: Layout,          live: false },
-  { id: 'jarvis-faces',  label: 'Jarvis Faces',   icon: MessageSquare,   live: true  },
-  { id: 'weather',       label: 'Weather / GO',   icon: Cloud,           live: true  },
+  { id: 'bim',           label: 'BIM / Plans',    icon: Layout,          live: true  },
+  { id: 'jarvis-faces',       label: 'Jarvis Faces',        icon: MessageSquare, live: true  },
+  { id: 'weather',            label: 'Weather / GO',        icon: Cloud,         live: true  },
+  { id: 'onboarding',         label: 'Onboard Tenant',      icon: Users,         live: true  },
+  { id: 'finish-selections',  label: 'Finish Selections',   icon: CheckCircle,   live: true  },
 ];
 
 // ── Demo data (genuine logic, not Math.random()) ───────────────────────────────
@@ -1767,6 +1770,417 @@ function SaasAdminModule({ authKey, apiBase }: { authKey: string; apiBase: strin
   );
 }
 
+// ── Module: Tenant Onboarding Wizard ─────────────────────────────────────────
+
+const PLANS_INFO = [
+  { id: 'starter',    label: 'Starter',    price: '$299/mo', features: ['Leads', 'Jarvis AI', 'CRM', 'Proposals'] },
+  { id: 'pro',        label: 'Pro',         price: '$599/mo', features: ['Everything in Starter', 'Gantt', 'Catalog', 'QuickBooks', 'BIM'] },
+  { id: 'enterprise', label: 'Enterprise',  price: '$1,499/mo', features: ['Everything in Pro', 'SaaS Admin', 'Custom branding', 'Dedicated support'] },
+];
+
+type OnboardStep = 'info' | 'plan' | 'features' | 'confirm' | 'done';
+
+function TenantOnboardingModule({ authKey, apiBase }: { authKey: string; apiBase: string }) {
+  const [step, setStep] = useState<OnboardStep>('info');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [plan, setPlan] = useState<'starter' | 'pro' | 'enterprise'>('starter');
+  const [features, setFeatures] = useState<string[]>(['leads', 'crm', 'jarvis']);
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<{ tenant_id: string; name: string; plan: string } | null>(null);
+  const [err, setErr] = useState('');
+
+  const ALL_FEATURES = [
+    { id: 'leads',      label: 'Lead Capture' },
+    { id: 'crm',        label: 'CRM' },
+    { id: 'jarvis',     label: 'Jarvis AI' },
+    { id: 'proposals',  label: 'Proposals' },
+    { id: 'gantt',      label: 'Gantt / Scheduling' },
+    { id: 'catalog',    label: 'Material Catalog' },
+    { id: 'quickbooks', label: 'QuickBooks Sync' },
+    { id: 'bim',        label: 'BIM / Plan Markup' },
+    { id: 'analytics',  label: 'Analytics Dashboard' },
+  ];
+
+  const toggleFeature = (id: string) =>
+    setFeatures((prev) => prev.includes(id) ? prev.filter((f) => f !== id) : [...prev, id]);
+
+  const submit = async () => {
+    setSubmitting(true);
+    setErr('');
+    try {
+      const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 40)
+        + '-' + Date.now().toString(36);
+      const r = await fetch(`${apiBase}/api/v1/saas/tenants`, {
+        method: 'POST',
+        headers: { 'X-Master-Key': authKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenant_id: slug,
+          business_name: name,
+          contact_email: email || 'noemail@example.com',
+          contact_phone: phone || undefined,
+          plan,
+        }),
+      });
+      if (!r.ok) { const d = await r.json(); throw new Error(d.detail ?? 'Server error'); }
+      const d = await r.json();
+      setResult({ tenant_id: d.tenant_id, name: d.business_name, plan: d.plan });
+      setStep('done');
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const STEPS: OnboardStep[] = ['info', 'plan', 'features', 'confirm'];
+  const stepIdx = STEPS.indexOf(step);
+
+  const planInfo = PLANS_INFO.find((p) => p.id === plan)!;
+
+  return (
+    <div className="space-y-5 max-w-2xl">
+      <div className="flex items-center justify-between">
+        <h3 className="text-white font-black">New Tenant Onboarding</h3>
+        <LiveBadge />
+      </div>
+
+      {/* Progress bar */}
+      {step !== 'done' && (
+        <div className="flex gap-1">
+          {STEPS.map((s, i) => (
+            <div key={s} className={`flex-1 h-1 rounded-full transition-colors ${
+              i <= stepIdx ? 'bg-yellow-500' : 'bg-zinc-800'
+            }`} />
+          ))}
+        </div>
+      )}
+
+      {step === 'done' && result ? (
+        <OSCard accent>
+          <div className="text-center py-4">
+            <CheckCircle className="mx-auto text-green-400 mb-3" size={40} />
+            <p className="text-white font-black text-xl mb-1">Tenant Created!</p>
+            <p className="text-zinc-400 text-sm mb-4">{result.name}</p>
+            <div className="grid grid-cols-2 gap-2 text-sm mb-4">
+              <div className="bg-zinc-800 rounded-xl p-3">
+                <p className="text-zinc-500 text-xs">Tenant ID</p>
+                <p className="text-yellow-400 font-mono font-bold text-xs mt-0.5">{result.tenant_id}</p>
+              </div>
+              <div className="bg-zinc-800 rounded-xl p-3">
+                <p className="text-zinc-500 text-xs">Plan</p>
+                <p className="text-white font-bold capitalize mt-0.5">{result.plan}</p>
+              </div>
+            </div>
+            <button onClick={() => { setStep('info'); setName(''); setEmail(''); setPhone(''); setPlan('starter'); setFeatures(['leads','crm','jarvis']); setResult(null); }}
+              className="px-6 py-2 bg-yellow-500 hover:bg-yellow-400 text-black font-bold rounded-xl transition-colors">
+              Onboard Another
+            </button>
+          </div>
+        </OSCard>
+      ) : step === 'info' ? (
+        <OSCard>
+          <p className="text-white font-bold mb-4">Step 1 — Company Info</p>
+          <div className="space-y-3">
+            <input type="text" placeholder="Company name *" value={name} onChange={(e) => setName(e.target.value)}
+              className="w-full bg-zinc-800 border border-zinc-700 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-yellow-500" />
+            <input type="email" placeholder="Admin email" value={email} onChange={(e) => setEmail(e.target.value)}
+              className="w-full bg-zinc-800 border border-zinc-700 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-yellow-500" />
+            <input type="tel" placeholder="Phone" value={phone} onChange={(e) => setPhone(e.target.value)}
+              className="w-full bg-zinc-800 border border-zinc-700 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-yellow-500" />
+          </div>
+          <button onClick={() => setStep('plan')} disabled={!name.trim()}
+            className="mt-4 w-full py-2.5 bg-yellow-500 hover:bg-yellow-400 disabled:opacity-40 text-black font-bold rounded-xl transition-colors">
+            Next: Choose Plan
+          </button>
+        </OSCard>
+      ) : step === 'plan' ? (
+        <div className="space-y-3">
+          <p className="text-white font-bold">Step 2 — Select Plan</p>
+          {PLANS_INFO.map((p) => (
+            <OSCard key={p.id} accent={plan === p.id}>
+              <div className="flex items-start gap-3 cursor-pointer" onClick={() => setPlan(p.id as typeof plan)}>
+                <div className={`w-4 h-4 rounded-full border-2 mt-0.5 shrink-0 transition-colors ${
+                  plan === p.id ? 'border-yellow-500 bg-yellow-500' : 'border-zinc-600'
+                }`} />
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <p className="text-white font-bold">{p.label}</p>
+                    <p className="text-yellow-400 font-black">{p.price}</p>
+                  </div>
+                  <ul className="mt-1 space-y-0.5">
+                    {p.features.map((f) => (
+                      <li key={f} className="text-zinc-400 text-xs flex items-center gap-1">
+                        <span className="text-green-400">✓</span> {f}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </OSCard>
+          ))}
+          <div className="flex gap-2">
+            <button onClick={() => setStep('info')} className="flex-1 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 font-bold rounded-xl transition-colors">Back</button>
+            <button onClick={() => setStep('features')} className="flex-1 py-2.5 bg-yellow-500 hover:bg-yellow-400 text-black font-bold rounded-xl transition-colors">Next: Features</button>
+          </div>
+        </div>
+      ) : step === 'features' ? (
+        <OSCard>
+          <p className="text-white font-bold mb-4">Step 3 — Feature Access</p>
+          <div className="grid grid-cols-2 gap-2">
+            {ALL_FEATURES.map((f) => (
+              <button key={f.id} onClick={() => toggleFeature(f.id)}
+                className={`flex items-center gap-2 p-2.5 rounded-xl border text-sm font-medium transition-colors text-left ${
+                  features.includes(f.id)
+                    ? 'border-yellow-500 bg-yellow-500/10 text-yellow-400'
+                    : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600'
+                }`}>
+                <span className={`w-3.5 h-3.5 rounded shrink-0 border ${
+                  features.includes(f.id) ? 'bg-yellow-500 border-yellow-500' : 'border-zinc-600'
+                }`} />
+                {f.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2 mt-4">
+            <button onClick={() => setStep('plan')} className="flex-1 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 font-bold rounded-xl transition-colors">Back</button>
+            <button onClick={() => setStep('confirm')} className="flex-1 py-2.5 bg-yellow-500 hover:bg-yellow-400 text-black font-bold rounded-xl transition-colors">Review</button>
+          </div>
+        </OSCard>
+      ) : step === 'confirm' ? (
+        <OSCard accent>
+          <p className="text-white font-bold mb-4">Step 4 — Confirm</p>
+          <div className="space-y-2 text-sm mb-4">
+            <div className="flex justify-between"><span className="text-zinc-500">Company</span><span className="text-white font-bold">{name}</span></div>
+            {email && <div className="flex justify-between"><span className="text-zinc-500">Email</span><span className="text-zinc-300">{email}</span></div>}
+            <div className="flex justify-between"><span className="text-zinc-500">Plan</span><span className="text-yellow-400 font-bold capitalize">{plan} — {planInfo.price}</span></div>
+            <div className="flex justify-between items-start"><span className="text-zinc-500">Features</span><span className="text-zinc-300 text-right max-w-[60%]">{features.join(', ')}</span></div>
+          </div>
+          {err && <p className="text-red-400 text-xs mb-3">{err}</p>}
+          <div className="flex gap-2">
+            <button onClick={() => setStep('features')} className="flex-1 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 font-bold rounded-xl transition-colors">Back</button>
+            <button onClick={submit} disabled={submitting}
+              className="flex-1 py-2.5 bg-yellow-500 hover:bg-yellow-400 disabled:opacity-40 text-black font-bold rounded-xl transition-colors">
+              {submitting ? 'Creating…' : 'Create Tenant'}
+            </button>
+          </div>
+        </OSCard>
+      ) : null}
+    </div>
+  );
+}
+
+// ── Module: Finish Selections (Homeowner View) ────────────────────────────────
+
+interface ProjectSelection {
+  id: number;
+  zone_label: string | null;
+  quantity: number;
+  area_sqft: number | null;
+  approved: boolean;
+  item: {
+    id: number;
+    name: string;
+    sku: string;
+    category: string;
+    unit: string;
+    in_stock: boolean;
+    lead_time_days: number;
+    seasonal_note?: string;
+  } | null;
+  line_total_material: number;
+  line_total_labor: number;
+}
+
+interface ProjectSummary {
+  id: number;
+  customer_name: string;
+  property_address: string | null;
+  status: string;
+  total_usd: number;
+  item_count: number;
+  estimated_days_to_start: number;
+}
+
+function FinishSelectionsModule({ authKey, apiBase }: { authKey: string; apiBase: string }) {
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selections, setSelections] = useState<ProjectSelection[]>([]);
+  const [projData, setProjData] = useState<ProjectSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadingSel, setLoadingSel] = useState(false);
+  const [approving, setApproving] = useState<number | null>(null);
+
+  useEffect(() => {
+    fetch(`${apiBase}/api/v1/catalog/projects`, { headers: { 'X-Master-Key': authKey } })
+      .then((r) => r.ok ? r.json() : Promise.reject())
+      .then((d) => setProjects(d.projects ?? []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [authKey, apiBase]);
+
+  const loadProject = useCallback((id: number) => {
+    setLoadingSel(true);
+    setSelectedId(id);
+    fetch(`${apiBase}/api/v1/catalog/projects/${id}`, { headers: { 'X-Master-Key': authKey } })
+      .then((r) => r.ok ? r.json() : Promise.reject())
+      .then((d) => { setProjData(d.project); setSelections(d.selections ?? []); })
+      .catch(() => {})
+      .finally(() => setLoadingSel(false));
+  }, [authKey, apiBase]);
+
+  const approveSelection = async (selId: number) => {
+    if (!selectedId) return;
+    setApproving(selId);
+    await fetch(`${apiBase}/api/v1/catalog/projects/${selectedId}/selections/${selId}/approve`, {
+      method: 'POST',
+      headers: { 'X-Master-Key': authKey },
+    });
+    setSelections((prev) => prev.map((s) => s.id === selId ? { ...s, approved: true } : s));
+    setApproving(null);
+  };
+
+  const catColors: Record<string, string> = {
+    pavers: 'bg-yellow-500/20 text-yellow-400',
+    surfaces: 'bg-blue-500/20 text-blue-400',
+    concrete: 'bg-zinc-500/20 text-zinc-300',
+    edging: 'bg-purple-500/20 text-purple-400',
+    striping: 'bg-green-500/20 text-green-400',
+    plantings: 'bg-emerald-500/20 text-emerald-400',
+  };
+
+  const totalLine = selections.reduce((s, sel) => s + sel.line_total_material + sel.line_total_labor, 0);
+  const approvedCount = selections.filter((s) => s.approved).length;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <h3 className="text-white font-black">Finish Selections — Client View</h3>
+        <LiveBadge />
+      </div>
+
+      {!selectedId ? (
+        <>
+          <p className="text-zinc-500 text-sm">Select a project to review and approve finish selections.</p>
+          {loading ? (
+            <div className="text-zinc-500 text-sm py-8 text-center">Loading projects…</div>
+          ) : projects.length === 0 ? (
+            <OSCard><p className="text-zinc-500 text-sm text-center py-4">No projects yet. Create one in the Catalog module.</p></OSCard>
+          ) : (
+            <div className="space-y-2">
+              {projects.map((p) => (
+                <OSCard key={p.id}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-white font-bold">{p.customer_name}</p>
+                      {p.property_address && <p className="text-zinc-500 text-xs mt-0.5">{p.property_address}</p>}
+                      <div className="flex items-center gap-3 mt-1.5 text-xs">
+                        <span className="text-zinc-400">{p.item_count} items</span>
+                        <span className="text-yellow-400 font-bold">{fmtUsdFull(p.total_usd)}</span>
+                        <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                          p.status === 'approved' ? 'bg-green-500/20 text-green-400'
+                          : p.status === 'draft' ? 'bg-zinc-700 text-zinc-400'
+                          : 'bg-yellow-500/20 text-yellow-400'
+                        }`}>{p.status}</span>
+                      </div>
+                    </div>
+                    <button onClick={() => loadProject(p.id)}
+                      className="shrink-0 px-4 py-2 bg-yellow-500 hover:bg-yellow-400 text-black text-sm font-bold rounded-xl transition-colors">
+                      Review
+                    </button>
+                  </div>
+                </OSCard>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="flex items-center gap-3">
+            <button onClick={() => { setSelectedId(null); setSelections([]); setProjData(null); }}
+              className="text-zinc-500 hover:text-white text-sm transition-colors">← Back</button>
+            {projData && <p className="text-white font-bold">{projData.customer_name}</p>}
+          </div>
+
+          {projData && (
+            <div className="grid grid-cols-3 gap-3">
+              <OSCard accent>
+                <p className="text-zinc-500 text-xs mb-1">Total Estimate</p>
+                <p className="text-yellow-400 font-black text-xl">{fmtUsdFull(totalLine)}</p>
+              </OSCard>
+              <OSCard>
+                <p className="text-zinc-500 text-xs mb-1">Approved</p>
+                <p className="text-green-400 font-black text-xl">{approvedCount}/{selections.length}</p>
+              </OSCard>
+              <OSCard>
+                <p className="text-zinc-500 text-xs mb-1">Lead Time</p>
+                <p className="text-white font-black text-xl">
+                  {projData.estimated_days_to_start > 0 ? `${projData.estimated_days_to_start}d` : 'Now'}
+                </p>
+              </OSCard>
+            </div>
+          )}
+
+          {loadingSel ? (
+            <div className="text-zinc-500 text-sm py-8 text-center">Loading selections…</div>
+          ) : selections.length === 0 ? (
+            <OSCard><p className="text-zinc-500 text-sm text-center py-4">No finish selections yet. Add items in the Catalog module.</p></OSCard>
+          ) : (
+            <div className="space-y-3">
+              {selections.map((sel) => (
+                <OSCard key={sel.id} accent={sel.approved}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        {sel.item && (
+                          <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${catColors[sel.item.category] ?? 'bg-zinc-700 text-zinc-300'}`}>
+                            {sel.item.category}
+                          </span>
+                        )}
+                        {sel.zone_label && <span className="text-zinc-500 text-xs">{sel.zone_label}</span>}
+                        {sel.approved && <span className="text-green-400 text-xs font-bold">✓ Approved</span>}
+                      </div>
+                      <p className="text-white font-bold">{sel.item?.name ?? 'Unknown item'}</p>
+                      <p className="text-zinc-500 text-xs mt-0.5">{sel.item?.sku}</p>
+                      <div className="flex items-center gap-3 mt-2 text-xs text-zinc-500">
+                        <span>Qty: {sel.quantity} {sel.item?.unit}</span>
+                        {sel.area_sqft && <span>{sel.area_sqft.toLocaleString()} sqft</span>}
+                        {sel.item && (
+                          <span className={sel.item.in_stock ? 'text-green-400' : 'text-red-400'}>
+                            {sel.item.in_stock ? 'In stock' : 'Out of stock'}
+                          </span>
+                        )}
+                        {sel.item && sel.item.lead_time_days > 0 && (
+                          <span>Lead: {sel.item.lead_time_days}d</span>
+                        )}
+                      </div>
+                      {sel.item?.seasonal_note && (
+                        <p className="text-yellow-400/70 text-xs mt-1 italic">{sel.item.seasonal_note}</p>
+                      )}
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-yellow-400 font-black text-lg">{fmtUsdFull(sel.line_total_material + sel.line_total_labor)}</p>
+                      <p className="text-zinc-600 text-xs">Mat: {fmtUsdFull(sel.line_total_material)}</p>
+                      <p className="text-zinc-600 text-xs">Labor: {fmtUsdFull(sel.line_total_labor)}</p>
+                      {!sel.approved && (
+                        <button onClick={() => approveSelection(sel.id)} disabled={approving === sel.id}
+                          className="mt-2 px-3 py-1 bg-green-500/20 hover:bg-green-500/30 text-green-400 text-xs font-bold rounded-lg transition-colors disabled:opacity-50">
+                          {approving === sel.id ? '…' : 'Approve'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </OSCard>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Module: BIM / Plan Markup ─────────────────────────────────────────────────
 
 interface BimZone {
@@ -2421,8 +2835,10 @@ export function OSPage() {
             {activeModule === 'saas'           && <SaasAdminModule {...sharedProps} />}
             {activeModule === 'bim'            && <BimModule {...sharedProps} />}
             {activeModule === 'jarvis-faces'   && <JarvisFacesModule {...sharedProps} />}
-            {activeModule === 'weather'        && <WeatherModule {...sharedProps} />}
-            {!kpi && !['jarvis','thermal','roller','drone','crew','math-ai','gantt','catalog','quickbooks','saas','bim','jarvis-faces','weather'].includes(activeModule) && (
+            {activeModule === 'weather'           && <WeatherModule {...sharedProps} />}
+            {activeModule === 'onboarding'        && <TenantOnboardingModule {...sharedProps} />}
+            {activeModule === 'finish-selections' && <FinishSelectionsModule {...sharedProps} />}
+            {!kpi && !['jarvis','thermal','roller','drone','crew','math-ai','gantt','catalog','quickbooks','saas','bim','jarvis-faces','weather','onboarding','finish-selections'].includes(activeModule) && (
               <div className="text-zinc-500 text-sm text-center py-12">Loading data…</div>
             )}
           </div>

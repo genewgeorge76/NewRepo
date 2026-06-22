@@ -297,6 +297,19 @@ def add_selection(project_id: int, body: SelectionIn, db: Session = Depends(get_
     return _project_summary(project)
 
 
+@router.post('/projects/{project_id}/selections/{sel_id}/approve', dependencies=[Depends(verify_premium_security)])
+def approve_selection(project_id: int, sel_id: int, db: Session = Depends(get_db)):
+    sel = db.query(CatalogSelection).filter(
+        CatalogSelection.id == sel_id,
+        CatalogSelection.project_id == project_id,
+    ).first()
+    if not sel:
+        raise HTTPException(404, 'Selection not found')
+    sel.approved = True
+    db.commit()
+    return {'id': sel.id, 'approved': True}
+
+
 @router.delete('/projects/{project_id}/selections/{sel_id}', dependencies=[Depends(verify_premium_security)])
 def remove_selection(project_id: int, sel_id: int, db: Session = Depends(get_db)):
     sel = db.query(CatalogSelection).filter(
@@ -322,19 +335,23 @@ def list_categories(db: Session = Depends(get_db)):
 
 
 @router.get('/swap-suggestions/{project_id}', dependencies=[Depends(verify_premium_security)])
-def swap_suggestions(project_id: int, budget_usd: float = Query(...), db: Session = Depends(get_db)):
-    """Jarvis suggests lower-cost items that preserve look when project is over budget."""
+def swap_suggestions(
+    project_id: int,
+    budget_usd: Optional[float] = Query(None, description='Target budget; omit to show all cheaper alternatives'),
+    db: Session = Depends(get_db),
+):
+    """Jarvis suggests lower-cost items that preserve look, optionally constrained to a budget."""
     project = db.query(CatalogProject).filter(CatalogProject.id == project_id).first()
     if not project:
         raise HTTPException(404, 'Project not found')
     summary = _project_summary(project)
-    over = summary.total_usd - budget_usd
+    effective_budget = budget_usd if budget_usd is not None else summary.total_usd
+    over = summary.total_usd - effective_budget
     suggestions = []
     for sel in project.selections:
         item = sel.item
         if not item:
             continue
-        # Find cheaper alternatives in same category
         alts = db.query(SelectableItem).filter(
             SelectableItem.category == item.category,
             SelectableItem.id != item.id,
@@ -343,15 +360,20 @@ def swap_suggestions(project_id: int, budget_usd: float = Query(...), db: Sessio
             SelectableItem.price_usd < item.price_usd,
         ).order_by(SelectableItem.price_usd.desc()).limit(2).all()
         for alt in alts:
-            savings = (item.price_usd - alt.price_usd + item.install_labor_usd - alt.install_labor_usd) * sel.quantity
+            current_total = (item.price_usd + item.install_labor_usd) * sel.quantity
+            suggestion_total = (alt.price_usd + alt.install_labor_usd) * sel.quantity
+            savings = current_total - suggestion_total
+            pct = (savings / current_total * 100) if current_total else 0
             suggestions.append({
-                'zone': sel.zone_label or item.category,
-                'current_item': item.name,
-                'current_price': item.price_usd,
-                'suggested_item': alt.name,
-                'suggested_sku': alt.sku,
-                'suggested_price': alt.price_usd,
+                'current_item_id': item.id,
+                'current_item_name': item.name,
+                'suggestion_id': alt.id,
+                'suggestion_name': alt.name,
+                'suggestion_sku': alt.sku,
+                'current_total_usd': round(current_total, 2),
+                'suggestion_total_usd': round(suggestion_total, 2),
                 'savings_usd': round(savings, 2),
+                'pct_cheaper': round(pct, 1),
                 'look_match': 'Similar profile, slightly different texture' if alt.subcategory == item.subcategory else 'Different material, compatible aesthetic',
                 'in_stock': alt.in_stock,
                 'lead_time_days': alt.lead_time_days,
@@ -360,7 +382,7 @@ def swap_suggestions(project_id: int, budget_usd: float = Query(...), db: Sessio
     return {
         'project_id': project_id,
         'current_total': summary.total_usd,
-        'budget': budget_usd,
+        'budget': effective_budget,
         'over_budget': round(over, 2),
         'suggestions': suggestions[:6],
     }
