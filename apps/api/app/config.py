@@ -87,6 +87,20 @@ class Settings(BaseSettings):
     lob_api_key: str = ''             # Lob direct mail; empty = mock send
     lob_from_name: str = 'J. Worden & Sons'   # Business name for Lob "from" address
 
+    # QuickBooks Online
+    quickbooks_client_id: str = ''
+    quickbooks_client_secret: str = ''
+    quickbooks_access_token: str = ''
+    quickbooks_refresh_token: str = ''
+    quickbooks_realm_id: str = ''
+    quickbooks_redirect_uri: str = 'http://localhost:5174/oauth/qb'
+    quickbooks_sandbox: bool = True
+
+    # SaaS billing — Stripe plan price IDs for licensees
+    stripe_price_starter: str = ''     # Price ID for $299/mo starter plan
+    stripe_price_pro: str = ''         # Price ID for $599/mo pro plan
+    stripe_price_enterprise: str = ''  # Price ID for $1499/mo enterprise plan
+
     # Monitoring
     sentry_dsn: str = ''
 

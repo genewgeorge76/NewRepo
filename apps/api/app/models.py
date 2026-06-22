@@ -573,3 +573,172 @@ class ScanResult(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     property = relationship('ScanProperty', back_populates='result')
+
+
+# ── Jarvis OS — Catalog & 3D/4D Selection Models ─────────────────────────────
+
+class SelectableItem(Base):
+    """Tagged catalog object — every finish, paver, fixture, planting, or material
+    the customer can choose.  Each carries real price, real availability/lead time,
+    and install labour so swapping a finish updates total + timeline live."""
+    __tablename__ = 'selectable_items'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    sku = Column(String(60), nullable=False, unique=True, index=True)
+    category = Column(String(60), nullable=False, index=True)   # pavers | fixtures | finishes | plantings | materials
+    subcategory = Column(String(60), nullable=True)
+    name = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    manufacturer = Column(String(200), nullable=True)
+    unit = Column(String(30), nullable=False, default='sqft')   # sqft | ea | lnft | ton
+    price_usd = Column(Float, nullable=False)                   # material cost per unit
+    install_labor_usd = Column(Float, nullable=False, default=0.0)  # labor per unit
+    lead_time_days = Column(Integer, nullable=False, default=0)  # 0 = in-stock
+    in_stock = Column(Boolean, default=True)
+    available_qty = Column(Float, nullable=True)                 # None = unlimited
+    seasonal_note = Column(String(300), nullable=True)           # "Best installed Mar-Oct"
+    tags = Column(Text, nullable=True)                           # JSON list: ["permeable","ADA","recycled"]
+    color = Column(String(60), nullable=True)
+    texture = Column(String(60), nullable=True)
+    dimensions = Column(String(100), nullable=True)              # "12x12x2 in"
+    weight_per_unit = Column(Float, nullable=True)               # lbs per unit
+    thumbnail_url = Column(String(500), nullable=True)
+    model_3d_url = Column(String(500), nullable=True)            # GLTF/GLB asset
+    datasheet_url = Column(String(500), nullable=True)
+    is_active = Column(Boolean, default=True)
+    tenant_id = Column(String(64), default='default', nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    selections = relationship('CatalogSelection', back_populates='item')
+
+
+class CatalogProject(Base):
+    """A customer's 3D/4D property model — the container for all their selections."""
+    __tablename__ = 'catalog_projects'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    lead_id = Column(String(64), ForeignKey('leads.id'), nullable=True, index=True)
+    customer_name = Column(String(200), nullable=False)
+    property_address = Column(String(300), nullable=True)
+    project_date = Column(DateTime(timezone=True), nullable=True)  # desired start
+    total_sqft = Column(Float, nullable=True)
+    budget_usd = Column(Float, nullable=True)
+    status = Column(String(30), default='design')   # design | approved | ordered | installed
+    notes = Column(Text, nullable=True)
+    tenant_id = Column(String(64), default='default', nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    selections = relationship('CatalogSelection', back_populates='project')
+
+
+class CatalogSelection(Base):
+    """One item chosen within a CatalogProject — drives live total + timeline."""
+    __tablename__ = 'catalog_selections'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    project_id = Column(Integer, ForeignKey('catalog_projects.id'), nullable=False, index=True)
+    item_id = Column(Integer, ForeignKey('selectable_items.id'), nullable=False, index=True)
+    quantity = Column(Float, nullable=False, default=1.0)
+    area_sqft = Column(Float, nullable=True)                     # for spatial items
+    zone_label = Column(String(100), nullable=True)              # "Front driveway", "Patio"
+    override_price_usd = Column(Float, nullable=True)            # owner override
+    approved = Column(Boolean, default=False)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    project = relationship('CatalogProject', back_populates='selections')
+    item = relationship('SelectableItem', back_populates='selections')
+
+
+# ── Gantt / Critical-Path Models ──────────────────────────────────────────────
+
+class GanttTask(Base):
+    """Project schedule task for Gantt + critical-path planning."""
+    __tablename__ = 'gantt_tasks'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_id = Column(String(64), ForeignKey('jobs.id'), nullable=True, index=True)
+    project_name = Column(String(200), nullable=False)
+    task_name = Column(String(200), nullable=False)
+    phase = Column(String(60), nullable=True)              # mobilization | excavation | base | paving | striping | cleanup
+    assigned_to = Column(String(200), nullable=True)       # crew name / ID
+    equipment = Column(String(200), nullable=True)
+    planned_start = Column(DateTime(timezone=True), nullable=False)
+    planned_end = Column(DateTime(timezone=True), nullable=False)
+    actual_start = Column(DateTime(timezone=True), nullable=True)
+    actual_end = Column(DateTime(timezone=True), nullable=True)
+    duration_hours = Column(Float, nullable=True)
+    pct_complete = Column(Integer, default=0)              # 0–100
+    depends_on = Column(Text, nullable=True)               # JSON list of task IDs
+    is_critical = Column(Boolean, default=False)           # on critical path
+    weather_hold = Column(Boolean, default=False)
+    notes = Column(Text, nullable=True)
+    tenant_id = Column(String(64), default='default', nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+# ── SaaS / Multi-Tenant Billing Models ───────────────────────────────────────
+
+class TenantRecord(Base):
+    """White-label SaaS licensee — one row per contractor org."""
+    __tablename__ = 'tenant_records'
+    __table_args__ = (UniqueConstraint('slug', name='uq_tenant_records_slug'),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(64), nullable=False, unique=True, index=True)  # e.g. 'blueridge-paving'
+    slug = Column(String(64), nullable=False, index=True)
+    business_name = Column(String(200), nullable=False)
+    contact_email = Column(String(254), nullable=False)
+    contact_phone = Column(String(30), nullable=True)
+    plan = Column(String(30), default='starter')          # starter | pro | enterprise
+    status = Column(String(30), default='trial')          # trial | active | past_due | cancelled
+    stripe_customer_id = Column(String(100), nullable=True, index=True)
+    stripe_subscription_id = Column(String(100), nullable=True, index=True)
+    trial_ends_at = Column(DateTime(timezone=True), nullable=True)
+    current_period_end = Column(DateTime(timezone=True), nullable=True)
+    monthly_price_cents = Column(Integer, default=29900)  # $299/mo starter
+    primary_state = Column(String(2), nullable=True)      # home state for legal defaults
+    logo_url = Column(String(500), nullable=True)
+    primary_color = Column(String(20), nullable=True)
+    custom_domain = Column(String(200), nullable=True)
+    feature_flags = Column(Text, nullable=True)           # JSON: {"catalog": true, "drone": false}
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    subscription_events = relationship('TenantBillingEvent', back_populates='tenant')
+
+
+class TenantBillingEvent(Base):
+    """Stripe webhook event log per tenant."""
+    __tablename__ = 'tenant_billing_events'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey('tenant_records.id'), nullable=False, index=True)
+    stripe_event_id = Column(String(100), nullable=False, unique=True)
+    event_type = Column(String(100), nullable=False)       # invoice.paid, subscription.deleted, etc.
+    amount_cents = Column(Integer, nullable=True)
+    status = Column(String(30), nullable=True)
+    raw_json = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    tenant = relationship('TenantRecord', back_populates='subscription_events')
+
+
+class QuickBooksSync(Base):
+    """QuickBooks Online sync log — one row per synced entity."""
+    __tablename__ = 'quickbooks_sync'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(64), default='default', index=True)
+    entity_type = Column(String(50), nullable=False)       # Invoice | Customer | Payment | Estimate
+    local_id = Column(String(64), nullable=True)           # our DB id
+    qb_id = Column(String(100), nullable=True, index=True) # QuickBooks entity Id
+    sync_direction = Column(String(10), default='push')    # push | pull
+    status = Column(String(30), default='pending')         # pending | synced | error
+    error_message = Column(Text, nullable=True)
+    raw_response = Column(Text, nullable=True)
+    synced_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)

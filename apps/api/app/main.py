@@ -23,6 +23,12 @@ from .routers import (
     voice_ai,
     seo,
     anomalies,
+    # Jarvis OS — new capabilities
+    catalog,
+    gantt,
+    quickbooks,
+    saas_billing,
+    jarvis_modes,
 )
 
 
@@ -104,3 +110,10 @@ app.include_router(scan_campaign.router, prefix='/api/v1')
 app.include_router(voice_ai.router, prefix='/api/v1')
 app.include_router(seo.router, prefix='/api/v1')
 app.include_router(anomalies.router, prefix='/api/v1')
+
+# Jarvis OS — Catalog, Gantt, QuickBooks, SaaS billing, Jarvis three-faces
+app.include_router(catalog.router, prefix='/api/v1')
+app.include_router(gantt.router, prefix='/api/v1')
+app.include_router(quickbooks.router, prefix='/api/v1')
+app.include_router(saas_billing.router, prefix='/api/v1')
+app.include_router(jarvis_modes.router, prefix='/api/v1')
