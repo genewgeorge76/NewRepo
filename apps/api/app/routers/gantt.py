@@ -306,3 +306,65 @@ def demo_gantt(db: Session = Depends(get_db)):
     tasks = db.query(GanttTask).filter(GanttTask.project_name == project_name).order_by(GanttTask.planned_start).all()
     return {'project_name': project_name, 'tasks': [_task_out(t) for t in tasks]}
 
+
+@router.post('/weather-sync', dependencies=[Depends(verify_premium_security)])
+async def weather_sync(
+    project_name: str = Query(...),
+    lat: float = Query(37.5407),
+    lng: float = Query(-77.4360),
+    db: Session = Depends(get_db),
+):
+    """Auto-flag weather_hold on tasks whose planned_start falls on a forecast NO-GO day.
+
+    Uses Open-Meteo (free, no key). Clears holds on GO days.
+    """
+    import httpx
+
+    _MIN_TEMP_F = 50.0
+    _RAIN_PCT = 30
+    _WIND_MPH = 25
+
+    def _c2f(c: float) -> float:
+        return c * 9 / 5 + 32
+
+    try:
+        params = {
+            'latitude': lat, 'longitude': lng,
+            'daily': ['temperature_2m_max', 'precipitation_probability_max', 'wind_speed_10m_max'],
+            'temperature_unit': 'celsius', 'wind_speed_unit': 'mph',
+            'timezone': 'America/New_York', 'forecast_days': 7,
+        }
+        async with httpx.AsyncClient(timeout=8) as client:
+            r = await client.get('https://api.open-meteo.com/v1/forecast', params=params)
+            r.raise_for_status()
+            data = r.json()
+    except Exception:
+        return {'synced': 0, 'message': 'Weather fetch failed — holds unchanged.', 'mock': True}
+
+    daily = data['daily']
+    nogo_dates: set[str] = set()
+    for i, date_str in enumerate(daily['time']):
+        temp_f = _c2f(daily['temperature_2m_max'][i])
+        precip = daily['precipitation_probability_max'][i]
+        wind = daily['wind_speed_10m_max'][i]
+        if temp_f < _MIN_TEMP_F or precip >= _RAIN_PCT or wind > _WIND_MPH:
+            nogo_dates.add(date_str)
+
+    tasks = db.query(GanttTask).filter(GanttTask.project_name == project_name).all()
+    synced = 0
+    for task in tasks:
+        task_date = task.planned_start.strftime('%Y-%m-%d')
+        hold = task_date in nogo_dates
+        if task.weather_hold != hold:
+            task.weather_hold = hold
+            synced += 1
+    db.commit()
+
+    return {
+        'project_name': project_name,
+        'nogo_dates': sorted(nogo_dates),
+        'tasks_updated': synced,
+        'total_tasks': len(tasks),
+        'message': f'{synced} tasks updated. {len(nogo_dates)} NO-GO days in forecast window.',
+    }
+

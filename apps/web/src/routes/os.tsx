@@ -290,11 +290,123 @@ function PciGauge({ pci }: { pci: number }) {
 
 // ── Module: Overview ───────────────────────────────────────────────────────────
 
-function OverviewModule({ kpi, anomalies }: { kpi: KpiData; anomalies: AnomalyResult[] }) {
+function OverviewModule({
+  kpi, anomalies, authKey, apiBase,
+}: {
+  kpi: KpiData; anomalies: AnomalyResult[]; authKey: string; apiBase: string;
+}) {
   const net = kpi.cashflow.net_30d;
   const anomalous = anomalies.filter((a) => a.is_anomaly);
+
+  const [weather, setWeather] = useState<{ temp_f: number; condition: string; paving_status: string; nogo_reason: string | null } | null>(null);
+  const [nextGoDay, setNextGoDay] = useState<string | null>(null);
+  const [criticalTasks, setCriticalTasks] = useState<{ task_name: string; phase: string; planned_end: string; is_critical: boolean }[]>([]);
+  const [jarvisInsight, setJarvisInsight] = useState<string>('');
+  const [loadingInsight, setLoadingInsight] = useState(false);
+
+  useEffect(() => {
+    fetch(`${apiBase}/api/v1/weather/current`, { headers: { 'X-Master-Key': authKey } })
+      .then((r) => r.ok ? r.json() : null).then((d) => d && setWeather(d)).catch(() => {});
+    fetch(`${apiBase}/api/v1/weather/forecast?days=7`, { headers: { 'X-Master-Key': authKey } })
+      .then((r) => r.ok ? r.json() : null).then((d) => d && setNextGoDay(d.next_go_day ?? null)).catch(() => {});
+    fetch(`${apiBase}/api/v1/gantt/tasks?project_name=Chesterfield`, { headers: { 'X-Master-Key': authKey } })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => d && setCriticalTasks((d.tasks ?? []).filter((t: { is_critical: boolean }) => t.is_critical).slice(0, 3)))
+      .catch(() => {});
+  }, [authKey, apiBase]);
+
+  const fetchJarvisInsight = async () => {
+    setLoadingInsight(true);
+    const anomSummary = anomalous.length === 0
+      ? 'No anomalies detected.'
+      : anomalous.map((a) => `${a.metric_name}: ${a.message} (z=${a.z_score.toFixed(1)})`).join('; ');
+    const weatherSummary = weather
+      ? `Current: ${weather.temp_f}°F, ${weather.condition}, paving ${weather.paving_status}. Next GO: ${nextGoDay ?? 'unknown'}.`
+      : '';
+    const kpiSummary = `Leads: ${kpi.pipeline.total_leads}, Win rate: ${kpi.proposals.win_rate_pct}%, Active jobs: ${kpi.jobs.active}, Net 30d: $${net.toLocaleString()}`;
+    try {
+      const r = await fetch(`${apiBase}/api/v1/jarvis-modes/chat`, {
+        method: 'POST',
+        headers: { 'X-Master-Key': authKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'operator',
+          messages: [{ role: 'user', content: `Based on this data, give me 2-3 specific action items for today:\n\nAnomalies: ${anomSummary}\nWeather: ${weatherSummary}\nKPIs: ${kpiSummary}\n\nBe direct, specific, and concise.` }],
+        }),
+      });
+      const d = r.ok ? await r.json() : null;
+      setJarvisInsight(d?.reply ?? 'Jarvis unavailable.');
+    } catch {
+      setJarvisInsight('Jarvis unavailable — check API keys.');
+    } finally {
+      setLoadingInsight(false);
+    }
+  };
+
+  const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
   return (
     <div className="space-y-6">
+      {/* Fused intelligence bar */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <OSCard accent={weather?.paving_status === 'GO'}>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-zinc-500 text-xs mb-0.5">Paving Status</p>
+              {weather ? (
+                <>
+                  <p className={`text-2xl font-black ${weather.paving_status === 'GO' ? 'text-green-400' : 'text-red-400'}`}>
+                    {weather.paving_status}
+                  </p>
+                  <p className="text-zinc-400 text-xs mt-0.5">{weather.temp_f}°F · {weather.condition}</p>
+                  {nextGoDay && <p className="text-zinc-500 text-xs">Next GO: {fmtDate(nextGoDay)}</p>}
+                </>
+              ) : <p className="text-zinc-600 text-sm">Loading…</p>}
+            </div>
+            <Cloud size={24} className={weather?.paving_status === 'GO' ? 'text-green-400' : 'text-zinc-600'} />
+          </div>
+        </OSCard>
+
+        <OSCard>
+          <p className="text-zinc-500 text-xs mb-2">Critical Path</p>
+          {criticalTasks.length === 0 ? (
+            <p className="text-zinc-600 text-xs">No active critical tasks</p>
+          ) : (
+            <div className="space-y-1.5">
+              {criticalTasks.map((t, i) => (
+                <div key={i} className="flex items-start gap-2 text-xs">
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-400 mt-1 shrink-0" />
+                  <div>
+                    <p className="text-white font-semibold leading-tight">{t.task_name}</p>
+                    <p className="text-zinc-500">{t.phase} · ends {fmtDate(t.planned_end)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </OSCard>
+
+        <OSCard accent={anomalous.length > 0}>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-zinc-500 text-xs">Anomalies</p>
+            <AlertTriangle size={14} className={anomalous.length > 0 ? 'text-yellow-400' : 'text-zinc-600'} />
+          </div>
+          {anomalous.length === 0 ? (
+            <p className="text-green-400 font-bold">All clear</p>
+          ) : (
+            <div className="space-y-1">
+              {anomalous.slice(0, 3).map((a) => (
+                <div key={a.metric_name} className="flex items-center gap-1.5 text-xs">
+                  <SevBadge severity={a.severity} />
+                  <span className="text-zinc-400 truncate">{a.metric_name.replace(/_/g, ' ')}</span>
+                </div>
+              ))}
+              {anomalous.length > 3 && <p className="text-zinc-600 text-xs">+{anomalous.length - 3} more</p>}
+            </div>
+          )}
+        </OSCard>
+      </div>
+
+      {/* KPI grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <OSCard accent><KV k="Total Leads" v={fmt(kpi.pipeline.total_leads)} accent /></OSCard>
         <OSCard><KV k="Won YTD" v={kpi.pipeline.won_ytd} /></OSCard>
@@ -311,13 +423,33 @@ function OverviewModule({ kpi, anomalies }: { kpi: KpiData; anomalies: AnomalyRe
         </OSCard>
       </div>
 
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <AlertTriangle size={14} className="text-yellow-400" />
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider">Anomaly Monitor</h3>
-          {anomalous.length === 0 && <span className="text-green-400 text-xs">All clear</span>}
+      {/* Jarvis Operator Intelligence */}
+      <OSCard>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Brain size={14} className="text-yellow-400" />
+            <p className="text-white font-bold text-sm">Jarvis Operator Intelligence</p>
+          </div>
+          <button onClick={fetchJarvisInsight} disabled={loadingInsight}
+            className="flex items-center gap-1.5 px-3 py-1 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-400 text-xs font-bold rounded-lg transition-colors disabled:opacity-50">
+            {loadingInsight ? <RefreshCw size={11} className="animate-spin" /> : <Zap size={11} />}
+            {loadingInsight ? 'Thinking…' : 'Get Insights'}
+          </button>
         </div>
-        {anomalous.length > 0 ? (
+        {jarvisInsight ? (
+          <p className="text-zinc-300 text-sm leading-relaxed whitespace-pre-line">{jarvisInsight}</p>
+        ) : (
+          <p className="text-zinc-600 text-sm">Click "Get Insights" to run a proactive Jarvis operator analysis fusing anomaly data, weather, and KPIs.</p>
+        )}
+      </OSCard>
+
+      {/* Detailed anomaly list */}
+      {anomalous.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle size={14} className="text-yellow-400" />
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider">Anomaly Detail</h3>
+          </div>
           <div className="space-y-2">
             {anomalous.map((a) => (
               <OSCard key={a.metric_name} accent className="flex items-start justify-between gap-3">
@@ -332,14 +464,8 @@ function OverviewModule({ kpi, anomalies }: { kpi: KpiData; anomalies: AnomalyRe
               </OSCard>
             ))}
           </div>
-        ) : (
-          <OSCard>
-            <p className="text-zinc-500 text-sm text-center py-4">
-              {anomalies.length === 0 ? 'Anomaly checks not yet run.' : 'No anomalies detected in last 7 days.'}
-            </p>
-          </OSCard>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1127,14 +1253,39 @@ function GanttModule({ authKey, apiBase }: { authKey: string; apiBase: string })
   const [tasks, setTasks] = useState<GanttTaskRow[]>([]);
   const [projectName, setProjectName] = useState('');
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string>('');
 
-  useEffect(() => {
+  const loadDemo = useCallback(() => {
+    setLoading(true);
     fetch(`${apiBase}/api/v1/gantt/demo`, { headers: { 'X-Master-Key': authKey } })
       .then((r) => r.ok ? r.json() : Promise.reject())
       .then((d) => { setTasks(d.tasks ?? []); setProjectName(d.project_name ?? ''); })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [authKey, apiBase]);
+
+  useEffect(() => { loadDemo(); }, [loadDemo]);
+
+  const syncWeather = async () => {
+    if (!projectName) return;
+    setSyncing(true);
+    setSyncResult('');
+    try {
+      const encoded = encodeURIComponent(projectName);
+      const r = await fetch(`${apiBase}/api/v1/gantt/weather-sync?project_name=${encoded}`, {
+        method: 'POST',
+        headers: { 'X-Master-Key': authKey },
+      });
+      const d = r.ok ? await r.json() : null;
+      if (d) {
+        setSyncResult(d.message ?? '');
+        loadDemo();
+      }
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   if (loading) return <div className="text-zinc-500 text-sm py-12 text-center">Loading Gantt…</div>;
 
@@ -1152,8 +1303,19 @@ function GanttModule({ authKey, apiBase }: { authKey: string; apiBase: string })
           <h3 className="text-white font-black">Gantt / Critical Path</h3>
           {projectName && <p className="text-zinc-500 text-xs mt-0.5">{projectName}</p>}
         </div>
-        <LiveBadge />
+        <div className="flex items-center gap-2">
+          <button onClick={syncWeather} disabled={syncing}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs font-bold rounded-lg transition-colors disabled:opacity-50">
+            {syncing ? <RefreshCw size={11} className="animate-spin" /> : <Cloud size={11} />}
+            {syncing ? 'Syncing…' : 'Sync Weather'}
+          </button>
+          <LiveBadge />
+        </div>
       </div>
+
+      {syncResult && (
+        <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl px-3 py-2 text-blue-400 text-xs">{syncResult}</div>
+      )}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <OSCard><KV k="Tasks" v={tasks.length} /></OSCard>
@@ -2816,7 +2978,7 @@ export function OSPage() {
 
         <main className="flex-1 overflow-y-auto">
           <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
-            {activeModule === 'overview'     && kpi && <OverviewModule kpi={kpi} anomalies={anomalies} />}
+            {activeModule === 'overview'     && kpi && <OverviewModule kpi={kpi} anomalies={anomalies} {...sharedProps} />}
             {activeModule === 'jarvis'       && <JarvisModule />}
             {activeModule === 'crm'          && kpi && <CrmModule {...sharedProps} kpi={kpi} />}
             {activeModule === 'digital-twin' && kpi && <DigitalTwinModule kpi={kpi} />}
