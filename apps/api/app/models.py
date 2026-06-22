@@ -727,6 +727,31 @@ class TenantBillingEvent(Base):
     tenant = relationship('TenantRecord', back_populates='subscription_events')
 
 
+class PlanMarkup(Base):
+    """BIM / site plan with click-to-annotate zone markup.
+
+    Zones JSON schema per element:
+      {id, label, type, area_sqft, catalog_item_id, x_pct, y_pct, w_pct, h_pct, color, notes}
+    """
+    __tablename__ = 'plan_markups'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    catalog_project_id = Column(Integer, ForeignKey('catalog_projects.id'), nullable=True, index=True)
+    title = Column(String(200), nullable=False)
+    file_url = Column(String(500), nullable=True)          # uploaded PDF/image/SVG URL
+    file_type = Column(String(20), nullable=True)          # pdf | image | svg
+    thumbnail_url = Column(String(500), nullable=True)
+    zones = Column(Text, nullable=True)                    # JSON array of zone objects
+    total_area_sqft = Column(Float, nullable=True)
+    version = Column(Integer, default=1)
+    is_approved = Column(Boolean, default=False)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    notes = Column(Text, nullable=True)
+    tenant_id = Column(String(64), default='default', nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class QuickBooksSync(Base):
     """QuickBooks Online sync log — one row per synced entity."""
     __tablename__ = 'quickbooks_sync'

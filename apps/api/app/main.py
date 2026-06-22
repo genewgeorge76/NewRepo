@@ -29,6 +29,8 @@ from .routers import (
     quickbooks,
     saas_billing,
     jarvis_modes,
+    bim,
+    weather,
 )
 
 
@@ -117,3 +119,5 @@ app.include_router(gantt.router, prefix='/api/v1')
 app.include_router(quickbooks.router, prefix='/api/v1')
 app.include_router(saas_billing.router, prefix='/api/v1')
 app.include_router(jarvis_modes.router, prefix='/api/v1')
+app.include_router(bim.router, prefix='/api/v1')
+app.include_router(weather.router, prefix='/api/v1')

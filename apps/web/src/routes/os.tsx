@@ -9,10 +9,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Activity, AlertTriangle, BarChart3, BookOpen, Bot, Brain, Building2,
-  Calendar, Camera, CheckCircle, ChevronRight, Circle, Cpu, FileText,
-  HardHat, Layout, Layers, LayoutDashboard, Menu, MessageSquare, Package,
-  RefreshCw, Scale, Search, Shield, Thermometer, TrendingDown, TrendingUp,
-  Truck, Users, X, XCircle, Zap,
+  Calendar, Camera, CheckCircle, ChevronRight, Circle, Cloud, CloudRain,
+  Cpu, FileText, HardHat, Layout, Layers, LayoutDashboard, Menu,
+  MessageSquare, Package, Plus, RefreshCw, Scale, Search, Shield,
+  Thermometer, TrendingDown, TrendingUp, Truck, Users, Wind,
+  X, XCircle, Zap,
 } from 'lucide-react';
 import { JarvisChat } from '../components/JarvisChat';
 import {
@@ -99,7 +100,7 @@ type ModuleId =
   | 'overview' | 'jarvis' | 'crm' | 'digital-twin' | 'thermal'
   | 'roller' | 'drone' | 'crew' | 'search-pulse' | 'legal'
   | 'dispatch' | 'proposals' | 'math-ai'
-  | 'gantt' | 'catalog' | 'quickbooks' | 'saas' | 'bim' | 'jarvis-faces';
+  | 'gantt' | 'catalog' | 'quickbooks' | 'saas' | 'bim' | 'jarvis-faces' | 'weather';
 
 interface Module { id: ModuleId; label: string; icon: React.ElementType; live: boolean }
 
@@ -123,6 +124,7 @@ const MODULES: Module[] = [
   { id: 'saas',          label: 'SaaS Admin',     icon: Building2,       live: true  },
   { id: 'bim',           label: 'BIM / Plans',    icon: Layout,          live: false },
   { id: 'jarvis-faces',  label: 'Jarvis Faces',   icon: MessageSquare,   live: true  },
+  { id: 'weather',       label: 'Weather / GO',   icon: Cloud,           live: true  },
 ];
 
 // ── Demo data (genuine logic, not Math.random()) ───────────────────────────────
@@ -1214,12 +1216,46 @@ interface CatalogItem {
   seasonal_note: string | null;
 }
 
+interface CatalogProjectRow {
+  id: number;
+  customer_name: string;
+  property_address: string | null;
+  status: string;
+  total_material_usd: number;
+  total_labor_usd: number;
+  total_usd: number;
+  item_count: number;
+  estimated_days_to_start: number;
+}
+
+interface SwapSuggestion {
+  current_item_id: number;
+  current_item_name: string;
+  suggestion_id: number;
+  suggestion_name: string;
+  suggestion_sku: string;
+  current_total_usd: number;
+  suggestion_total_usd: number;
+  savings_usd: number;
+  pct_cheaper: number;
+}
+
 function CatalogModule({ authKey, apiBase }: { authKey: string; apiBase: string }) {
+  const [tab, setTab] = useState<'browse' | 'projects' | 'swaps'>('browse');
   const [items, setItems] = useState<CatalogItem[]>([]);
+  const [projects, setProjects] = useState<CatalogProjectRow[]>([]);
+  const [swaps, setSwaps] = useState<SwapSuggestion[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeCat, setActiveCat] = useState('all');
+  const [showNewProject, setShowNewProject] = useState(false);
+  const [newProjName, setNewProjName] = useState('');
+  const [newProjAddr, setNewProjAddr] = useState('');
+  const [newProjBudget, setNewProjBudget] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [selectedProject, setSelectedProject] = useState<number | null>(null);
+  const [addingItem, setAddingItem] = useState<{ item: CatalogItem; qty: string; zone: string } | null>(null);
 
-  useEffect(() => {
+  const loadItems = useCallback(() => {
     fetch(`${apiBase}/api/v1/catalog/items`, { headers: { 'X-Master-Key': authKey } })
       .then((r) => r.ok ? r.json() : Promise.reject())
       .then((d) => setItems(d.items ?? []))
@@ -1227,69 +1263,304 @@ function CatalogModule({ authKey, apiBase }: { authKey: string; apiBase: string 
       .finally(() => setLoading(false));
   }, [authKey, apiBase]);
 
+  const loadProjects = useCallback(() => {
+    fetch(`${apiBase}/api/v1/catalog/projects`, { headers: { 'X-Master-Key': authKey } })
+      .then((r) => r.ok ? r.json() : Promise.reject())
+      .then((d) => setProjects(d.projects ?? []))
+      .catch(() => {});
+  }, [authKey, apiBase]);
+
+  useEffect(() => { loadItems(); loadProjects(); }, [loadItems, loadProjects]);
+
+  const createProject = async () => {
+    if (!newProjName.trim()) return;
+    setCreating(true);
+    try {
+      const r = await fetch(`${apiBase}/api/v1/catalog/projects`, {
+        method: 'POST',
+        headers: { 'X-Master-Key': authKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customer_name: newProjName,
+          property_address: newProjAddr || undefined,
+          budget_usd: newProjBudget ? parseFloat(newProjBudget) : undefined,
+        }),
+      });
+      if (r.ok) {
+        const p = await r.json();
+        setProjects((prev) => [p, ...prev]);
+        setSelectedProject(p.id);
+        setShowNewProject(false);
+        setNewProjName(''); setNewProjAddr(''); setNewProjBudget('');
+      }
+    } finally { setCreating(false); }
+  };
+
+  const addItemToProject = async () => {
+    if (!addingItem || !selectedProject) return;
+    const qty = parseFloat(addingItem.qty) || 1;
+    await fetch(`${apiBase}/api/v1/catalog/projects/${selectedProject}/selections`, {
+      method: 'POST',
+      headers: { 'X-Master-Key': authKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ item_id: addingItem.item.id, quantity: qty, zone_label: addingItem.zone || undefined }),
+    });
+    setAddingItem(null);
+    loadProjects();
+  };
+
+  const loadSwaps = (projectId: number) => {
+    fetch(`${apiBase}/api/v1/catalog/swap-suggestions/${projectId}`, { headers: { 'X-Master-Key': authKey } })
+      .then((r) => r.ok ? r.json() : Promise.reject())
+      .then((d) => setSwaps(d.suggestions ?? []))
+      .catch(() => {});
+  };
+
   const cats = ['all', ...Array.from(new Set(items.map((i) => i.category)))];
   const filtered = activeCat === 'all' ? items : items.filter((i) => i.category === activeCat);
+  const activeProjData = projects.find((p) => p.id === selectedProject);
+
+  const TABS = [
+    { id: 'browse' as const,   label: 'Browse Catalog' },
+    { id: 'projects' as const, label: `Projects (${projects.length})` },
+    { id: 'swaps' as const,    label: 'Swap Suggestions' },
+  ];
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <h3 className="text-white font-black">Material Catalog — Live Pricing + Availability</h3>
+        <h3 className="text-white font-black">Material Catalog + Project Builder</h3>
         <LiveBadge />
       </div>
 
-      <div className="flex gap-2 flex-wrap">
-        {cats.map((cat) => (
-          <button key={cat} onClick={() => setActiveCat(cat)}
-            className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors ${
-              activeCat === cat
-                ? 'bg-yellow-500 text-black'
-                : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white'
+      {/* Tab bar */}
+      <div className="flex gap-1 border-b border-zinc-800">
+        {TABS.map((t) => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`px-4 py-2 text-sm font-semibold transition-colors border-b-2 ${
+              tab === t.id ? 'text-yellow-400 border-yellow-400' : 'text-zinc-500 border-transparent hover:text-white'
             }`}>
-            {cat.charAt(0).toUpperCase() + cat.slice(1).replace(/_/g, ' ')}
+            {t.label}
           </button>
         ))}
       </div>
 
-      {loading ? (
-        <div className="text-zinc-500 text-sm py-12 text-center">Loading catalog…</div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {filtered.map((item) => (
-            <OSCard key={item.id} accent={!item.in_stock}>
-              <div className="flex items-start justify-between mb-2">
-                <div className="flex-1 min-w-0">
-                  <p className="text-white text-sm font-semibold leading-tight">{item.name}</p>
-                  <p className="text-zinc-600 text-xs mt-0.5">{item.sku}</p>
-                </div>
-                <span className={`ml-2 shrink-0 text-xs font-bold px-1.5 py-0.5 rounded ${
-                  item.in_stock ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+      {/* Browse tab */}
+      {tab === 'browse' && (
+        <>
+          <div className="flex gap-2 flex-wrap">
+            {cats.map((cat) => (
+              <button key={cat} onClick={() => setActiveCat(cat)}
+                className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors ${
+                  activeCat === cat ? 'bg-yellow-500 text-black' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white'
                 }`}>
-                  {item.in_stock ? 'In Stock' : 'Out'}
-                </span>
+                {cat.charAt(0).toUpperCase() + cat.slice(1).replace(/_/g, ' ')}
+              </button>
+            ))}
+          </div>
+          {loading ? (
+            <div className="text-zinc-500 text-sm py-12 text-center">Loading catalog…</div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {filtered.map((item) => (
+                <OSCard key={item.id} accent={!item.in_stock}>
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white text-sm font-semibold leading-tight">{item.name}</p>
+                      <p className="text-zinc-600 text-xs mt-0.5">{item.sku}</p>
+                    </div>
+                    <span className={`ml-2 shrink-0 text-xs font-bold px-1.5 py-0.5 rounded ${
+                      item.in_stock ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                    }`}>{item.in_stock ? 'In Stock' : 'Out'}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs mt-3">
+                    <div><p className="text-zinc-600">Material</p><p className="text-yellow-400 font-black">${item.price_usd.toFixed(2)}/{item.unit}</p></div>
+                    <div><p className="text-zinc-600">Labor</p><p className="text-white font-bold">${item.install_labor_usd.toFixed(2)}/{item.unit}</p></div>
+                    <div><p className="text-zinc-600">Lead Time</p><p className="text-zinc-300">{item.lead_time_days === 0 ? 'Same day' : `${item.lead_time_days}d`}</p></div>
+                    <div><p className="text-zinc-600">Total/{item.unit}</p><p className="text-zinc-300 font-bold">${(item.price_usd + item.install_labor_usd).toFixed(2)}</p></div>
+                  </div>
+                  {item.seasonal_note && <p className="text-yellow-400/70 text-xs mt-2 italic">{item.seasonal_note}</p>}
+                  {selectedProject && (
+                    <button onClick={() => setAddingItem({ item, qty: '1', zone: '' })}
+                      className="mt-3 w-full flex items-center justify-center gap-1 py-1.5 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-400 text-xs font-bold rounded-lg transition-colors">
+                      <Plus size={11} /> Add to Project #{selectedProject}
+                    </button>
+                  )}
+                </OSCard>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Projects tab */}
+      {tab === 'projects' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-zinc-400 text-sm">{projects.length} projects</p>
+            <button onClick={() => setShowNewProject(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-500 hover:bg-yellow-400 text-black text-xs font-bold rounded-xl transition-colors">
+              <Plus size={12} /> New Project
+            </button>
+          </div>
+
+          {showNewProject && (
+            <OSCard accent>
+              <p className="text-white font-bold text-sm mb-3">New Catalog Project</p>
+              <div className="space-y-2">
+                <input type="text" placeholder="Customer name *" value={newProjName} onChange={(e) => setNewProjName(e.target.value)}
+                  className="w-full bg-zinc-800 border border-zinc-700 text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:border-yellow-500" />
+                <input type="text" placeholder="Property address" value={newProjAddr} onChange={(e) => setNewProjAddr(e.target.value)}
+                  className="w-full bg-zinc-800 border border-zinc-700 text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:border-yellow-500" />
+                <input type="number" placeholder="Budget ($)" value={newProjBudget} onChange={(e) => setNewProjBudget(e.target.value)}
+                  className="w-full bg-zinc-800 border border-zinc-700 text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:border-yellow-500" />
               </div>
-              <div className="grid grid-cols-2 gap-2 text-xs mt-3">
-                <div>
-                  <p className="text-zinc-600">Material</p>
-                  <p className="text-yellow-400 font-black">${item.price_usd.toFixed(2)}/{item.unit}</p>
-                </div>
-                <div>
-                  <p className="text-zinc-600">Labor</p>
-                  <p className="text-white font-bold">${item.install_labor_usd.toFixed(2)}/{item.unit}</p>
-                </div>
-                <div>
-                  <p className="text-zinc-600">Lead Time</p>
-                  <p className="text-zinc-300">{item.lead_time_days === 0 ? 'Same day' : `${item.lead_time_days}d`}</p>
-                </div>
-                <div>
-                  <p className="text-zinc-600">Total/{item.unit}</p>
-                  <p className="text-zinc-300 font-bold">${(item.price_usd + item.install_labor_usd).toFixed(2)}</p>
-                </div>
+              <div className="flex gap-2 mt-3">
+                <button onClick={createProject} disabled={!newProjName || creating}
+                  className="flex-1 py-2 bg-yellow-500 hover:bg-yellow-400 disabled:opacity-40 text-black text-sm font-bold rounded-xl transition-colors">
+                  {creating ? 'Creating…' : 'Create Project'}
+                </button>
+                <button onClick={() => setShowNewProject(false)}
+                  className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-sm rounded-xl transition-colors">
+                  Cancel
+                </button>
               </div>
-              {item.seasonal_note && (
-                <p className="text-yellow-400/70 text-xs mt-2 italic">{item.seasonal_note}</p>
-              )}
             </OSCard>
-          ))}
+          )}
+
+          {projects.length === 0 ? (
+            <OSCard><p className="text-zinc-500 text-sm text-center py-4">No projects. Create one to start selecting finishes.</p></OSCard>
+          ) : (
+            <div className="space-y-2">
+              {projects.map((p) => (
+                <OSCard key={p.id} accent={selectedProject === p.id}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <p className="text-white font-bold text-sm">{p.customer_name}</p>
+                        <span className="text-xs bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded">{p.status}</span>
+                      </div>
+                      {p.property_address && <p className="text-zinc-500 text-xs">{p.property_address}</p>}
+                      <div className="flex items-center gap-3 mt-2 text-xs">
+                        <span className="text-zinc-400">{p.item_count} items</span>
+                        <span className="text-yellow-400 font-bold">{fmtUsdFull(p.total_usd)}</span>
+                        {p.estimated_days_to_start > 0 && <span className="text-zinc-500">Lead: {p.estimated_days_to_start}d</span>}
+                      </div>
+                    </div>
+                    <button onClick={() => {
+                      setSelectedProject(selectedProject === p.id ? null : p.id);
+                      if (selectedProject !== p.id) setTab('browse');
+                    }}
+                      className={`shrink-0 px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${
+                        selectedProject === p.id
+                          ? 'bg-yellow-500 text-black'
+                          : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                      }`}>
+                      {selectedProject === p.id ? '✓ Active' : 'Select'}
+                    </button>
+                  </div>
+                </OSCard>
+              ))}
+            </div>
+          )}
+
+          {activeProjData && (
+            <OSCard accent>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-yellow-400 font-black text-sm">Active: {activeProjData.customer_name}</p>
+                <span className="text-yellow-400 font-black text-xl">{fmtUsdFull(activeProjData.total_usd)}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div><p className="text-zinc-500">Material</p><p className="text-white font-bold">{fmtUsdFull(activeProjData.total_material_usd)}</p></div>
+                <div><p className="text-zinc-500">Labor</p><p className="text-white font-bold">{fmtUsdFull(activeProjData.total_labor_usd)}</p></div>
+                <div><p className="text-zinc-500">Items</p><p className="text-white font-bold">{activeProjData.item_count}</p></div>
+              </div>
+              <div className="flex gap-2 mt-3">
+                <button onClick={() => { loadSwaps(activeProjData.id); setTab('swaps'); }}
+                  className="flex-1 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-lg transition-colors">
+                  View Swap Suggestions
+                </button>
+                <button onClick={() => setTab('browse')}
+                  className="flex-1 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-lg transition-colors">
+                  Add Items
+                </button>
+              </div>
+            </OSCard>
+          )}
+        </div>
+      )}
+
+      {/* Swap suggestions tab */}
+      {tab === 'swaps' && (
+        <div className="space-y-4">
+          {!selectedProject ? (
+            <OSCard><p className="text-zinc-500 text-sm text-center py-4">Select a project in the Projects tab to see swap suggestions.</p></OSCard>
+          ) : swaps.length === 0 ? (
+            <OSCard>
+              <p className="text-zinc-500 text-sm text-center py-4">
+                {selectedProject
+                  ? 'No cheaper alternatives found — current selections are already best-value.'
+                  : 'Select a project to see swap suggestions.'}
+              </p>
+              <div className="text-center mt-2">
+                <button onClick={() => loadSwaps(selectedProject!)}
+                  className="px-4 py-2 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-400 text-xs font-bold rounded-xl transition-colors">
+                  Load Suggestions
+                </button>
+              </div>
+            </OSCard>
+          ) : (
+            <div className="space-y-3">
+              {swaps.map((s, i) => (
+                <OSCard key={i} accent>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-zinc-500 text-xs mb-1">Currently selected:</p>
+                      <p className="text-white font-semibold text-sm">{s.current_item_name}</p>
+                      <p className="text-zinc-500 text-xs mt-2 mb-1">Suggested swap:</p>
+                      <p className="text-green-400 font-semibold text-sm">{s.suggestion_name}</p>
+                      <p className="text-zinc-600 text-xs">{s.suggestion_sku}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-green-400 font-black text-xl">-{fmtUsdFull(s.savings_usd)}</p>
+                      <p className="text-green-400 text-xs">{s.pct_cheaper.toFixed(1)}% cheaper</p>
+                    </div>
+                  </div>
+                </OSCard>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Add item overlay */}
+      {addingItem && (
+        <div className="fixed inset-0 z-60 bg-black/60 flex items-end sm:items-center justify-center p-4" onClick={() => setAddingItem(null)}>
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+            <p className="text-white font-bold mb-1">Add to Project</p>
+            <p className="text-yellow-400 text-sm font-semibold mb-4">{addingItem.item.name}</p>
+            <div className="space-y-3">
+              <div>
+                <p className="text-zinc-500 text-xs mb-1">Quantity ({addingItem.item.unit})</p>
+                <input type="number" value={addingItem.qty}
+                  onChange={(e) => setAddingItem({ ...addingItem, qty: e.target.value })}
+                  className="w-full bg-zinc-800 border border-zinc-700 text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:border-yellow-500" />
+              </div>
+              <div>
+                <p className="text-zinc-500 text-xs mb-1">Zone label (optional)</p>
+                <input type="text" placeholder="e.g. Front driveway" value={addingItem.zone}
+                  onChange={(e) => setAddingItem({ ...addingItem, zone: e.target.value })}
+                  className="w-full bg-zinc-800 border border-zinc-700 text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:border-yellow-500" />
+              </div>
+              <div className="bg-zinc-800 rounded-xl p-3 text-xs">
+                <div className="flex justify-between"><span className="text-zinc-500">Material</span><span className="text-white">${(addingItem.item.price_usd * (parseFloat(addingItem.qty)||1)).toFixed(2)}</span></div>
+                <div className="flex justify-between mt-1"><span className="text-zinc-500">Labor</span><span className="text-white">${(addingItem.item.install_labor_usd * (parseFloat(addingItem.qty)||1)).toFixed(2)}</span></div>
+                <div className="flex justify-between mt-1 font-bold"><span className="text-zinc-400">Total</span><span className="text-yellow-400">${((addingItem.item.price_usd + addingItem.item.install_labor_usd) * (parseFloat(addingItem.qty)||1)).toFixed(2)}</span></div>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button onClick={addItemToProject} className="flex-1 py-2 bg-yellow-500 hover:bg-yellow-400 text-black text-sm font-bold rounded-xl transition-colors">Add</button>
+              <button onClick={() => setAddingItem(null)} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-sm rounded-xl transition-colors">Cancel</button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -1498,69 +1769,300 @@ function SaasAdminModule({ authKey, apiBase }: { authKey: string; apiBase: strin
 
 // ── Module: BIM / Plan Markup ─────────────────────────────────────────────────
 
-function BimModule() {
-  const annotations = [
-    { x: 20, y: 15, label: 'North Parking — 8,400 sqft', color: '#EAB308' },
-    { x: 55, y: 40, label: 'Drive Lane — 2,100 sqft',   color: '#3B82F6' },
-    { x: 13, y: 40, label: 'ADA Stalls ×4',              color: '#22C55E' },
-    { x: 75, y: 20, label: 'Detention Pond',              color: '#6366F1' },
-  ];
+interface BimZone {
+  id: string;
+  label: string;
+  type: string;
+  area_sqft: number;
+  catalog_item_id: number | null;
+  x_pct: number;
+  y_pct: number;
+  w_pct: number;
+  h_pct: number;
+  color: string;
+  notes?: string;
+}
+
+interface BimPlan {
+  id: number;
+  title: string;
+  catalog_project_id: number | null;
+  file_url: string | null;
+  file_type: string | null;
+  zones: BimZone[];
+  total_area_sqft: number | null;
+  version: number;
+  is_approved: boolean;
+  notes: string | null;
+  created_at: string;
+  demo: boolean;
+}
+
+function BimModule({ authKey, apiBase }: { authKey: string; apiBase: string }) {
+  const [plan, setPlan] = useState<BimPlan | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [hoveredZone, setHoveredZone] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(`${apiBase}/api/v1/bim/demo`, { headers: { 'X-Master-Key': authKey } })
+      .then((r) => r.ok ? r.json() : Promise.reject())
+      .then((d) => setPlan(d))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [authKey, apiBase]);
+
+  const totalArea = plan?.zones.reduce((s, z) => s + z.area_sqft, 0) ?? 0;
+  const zoneCount = plan?.zones.length ?? 0;
+  const hasItems = plan?.zones.filter((z) => z.catalog_item_id).length ?? 0;
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <h3 className="text-white font-black">BIM / Plan Markup</h3>
-        <DemoBadge batch="Batch 3" />
+        <LiveBadge />
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <OSCard accent><KV k="Total Area" v="10,500 sqft" accent /></OSCard>
-        <OSCard><KV k="Zones" v="4" /></OSCard>
-        <OSCard><KV k="ADA Stalls" v="4" /></OSCard>
-        <OSCard><KV k="Est. Value" v="$42,000" /></OSCard>
-      </div>
+      {loading ? (
+        <div className="text-zinc-500 text-sm py-12 text-center">Loading plan…</div>
+      ) : plan ? (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <OSCard accent><KV k="Total Area" v={`${totalArea.toLocaleString()} sqft`} accent /></OSCard>
+            <OSCard><KV k="Zones" v={zoneCount} /></OSCard>
+            <OSCard><KV k="Linked Items" v={`${hasItems}/${zoneCount}`} /></OSCard>
+            <OSCard><KV k="Version" v={`v${plan.version}`} /></OSCard>
+          </div>
 
-      <OSCard>
-        <p className="text-zinc-500 text-xs font-semibold uppercase mb-3">Site Plan — Annotated Markup (Demo)</p>
-        <div className="relative w-full bg-zinc-800 rounded-xl overflow-hidden" style={{ paddingTop: '56.25%' }}>
-          <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 56" xmlns="http://www.w3.org/2000/svg">
-            <rect x="5" y="5" width="90" height="46" fill="none" stroke="#52525b" strokeWidth="0.5" rx="1" />
-            <rect x="8" y="8" width="45" height="22" fill="#1e1b4b" stroke="#EAB308" strokeWidth="0.5" rx="0.5" />
-            {[10,13,16,19,22,25,28,31,34,37,40,43].map((x, i) => (
-              <line key={i} x1={x} y1="8" x2={x} y2="30" stroke="#EAB308" strokeWidth="0.15" strokeDasharray="0.5 0.5" />
-            ))}
-            <rect x="55" y="30" width="38" height="12" fill="#1e3a5f" stroke="#3B82F6" strokeWidth="0.5" rx="0.5" />
-            <rect x="8" y="33" width="14" height="15" fill="#052e16" stroke="#22C55E" strokeWidth="0.5" rx="0.5" />
-            <text x="15" y="41" textAnchor="middle" fill="#22C55E" fontSize="1.5">♿ ×4</text>
-            <ellipse cx="75" cy="20" rx="12" ry="8" fill="#1e1b4b" stroke="#6366F1" strokeWidth="0.5" />
-            <text x="75" y="20.5" textAnchor="middle" fill="#6366F1" fontSize="1.8">~</text>
-            {annotations.map((a, i) => (
-              <g key={i}>
-                <circle cx={a.x} cy={a.y} r="1" fill={a.color} />
-                <circle cx={a.x} cy={a.y} r="1.8" fill="none" stroke={a.color} strokeWidth="0.3" />
-              </g>
-            ))}
-          </svg>
-        </div>
-        <div className="grid grid-cols-2 gap-2 mt-3">
-          {annotations.map((a) => (
-            <div key={a.label} className="flex items-center gap-2 text-xs">
-              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: a.color }} />
-              <span className="text-zinc-400">{a.label}</span>
+          <OSCard>
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-zinc-400 text-xs font-semibold uppercase">{plan.title}</p>
+              {plan.is_approved && (
+                <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full font-bold">Approved</span>
+              )}
             </div>
-          ))}
-        </div>
-      </OSCard>
 
-      <OSCard>
-        <p className="text-zinc-500 text-xs font-semibold mb-2 uppercase">Planned in Batch 3</p>
-        <ul className="text-zinc-600 text-xs space-y-1">
-          <li>• Upload PDF/CAD plan → extract zones, areas, dimensions automatically</li>
-          <li>• Click-to-annotate with trade callouts (paving, concrete, striping, landscaping)</li>
-          <li>• Zone tags drive catalog item selection + Gantt task generation with no re-keying</li>
-          <li>• Export PDF with estimate overlay; version history per revision</li>
-        </ul>
-      </OSCard>
+            {/* Interactive zone map */}
+            <div className="relative w-full bg-zinc-800 rounded-xl overflow-hidden border border-zinc-700" style={{ paddingTop: '56.25%' }}>
+              <div className="absolute inset-0">
+                {/* Site boundary */}
+                <div className="absolute inset-2 border border-zinc-600 rounded-lg" />
+                {/* Zones as positioned overlays */}
+                {plan.zones.map((zone) => (
+                  <div
+                    key={zone.id}
+                    className="absolute rounded cursor-pointer transition-all duration-150"
+                    style={{
+                      left: `${zone.x_pct}%`,
+                      top: `${zone.y_pct}%`,
+                      width: `${zone.w_pct}%`,
+                      height: `${zone.h_pct}%`,
+                      background: `${zone.color}22`,
+                      border: `2px solid ${zone.color}`,
+                      opacity: hoveredZone === zone.id ? 1 : 0.75,
+                      zIndex: hoveredZone === zone.id ? 10 : 1,
+                    }}
+                    onMouseEnter={() => setHoveredZone(zone.id)}
+                    onMouseLeave={() => setHoveredZone(null)}
+                  >
+                    <span className="text-[10px] font-bold leading-tight p-1 block truncate" style={{ color: zone.color }}>
+                      {zone.label}
+                    </span>
+                    {zone.area_sqft > 0 && (
+                      <span className="text-[9px] leading-tight px-1 block" style={{ color: zone.color, opacity: 0.8 }}>
+                        {zone.area_sqft.toLocaleString()} sqft
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Zone legend */}
+            <div className="grid grid-cols-2 gap-2 mt-3">
+              {plan.zones.map((z) => (
+                <div key={z.id}
+                  className={`flex items-start gap-2 text-xs p-1.5 rounded-lg transition-colors ${hoveredZone === z.id ? 'bg-zinc-700' : ''}`}
+                  onMouseEnter={() => setHoveredZone(z.id)}
+                  onMouseLeave={() => setHoveredZone(null)}>
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0 mt-0.5" style={{ background: z.color }} />
+                  <div>
+                    <p className="text-zinc-300 font-semibold">{z.label}</p>
+                    {z.area_sqft > 0 && <p className="text-zinc-600">{z.area_sqft.toLocaleString()} sqft · {z.type}</p>}
+                    {z.notes && <p className="text-zinc-600 italic mt-0.5">{z.notes}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </OSCard>
+
+          {plan.notes && (
+            <OSCard>
+              <p className="text-zinc-500 text-xs">{plan.notes}</p>
+            </OSCard>
+          )}
+        </>
+      ) : (
+        <OSCard><p className="text-zinc-500 text-sm text-center py-4">Demo plan unavailable — check API connection.</p></OSCard>
+      )}
+    </div>
+  );
+}
+
+// ── Module: Weather / GO ───────────────────────────────────────────────────────
+
+interface WeatherDay {
+  date: string;
+  temp_max_f: number;
+  temp_min_f: number;
+  precip_probability_pct: number;
+  wind_max_mph: number;
+  condition: string;
+  weather_code: number;
+  paving_status: 'GO' | 'NO-GO';
+  nogo_reason: string | null;
+}
+
+interface WeatherForecast {
+  lat: number;
+  lng: number;
+  forecast: WeatherDay[];
+  paving_windows: WeatherDay[];
+  next_go_day: string | null;
+  mock: boolean;
+}
+
+interface WeatherCurrent {
+  temp_f: number;
+  precip_probability_pct: number;
+  wind_mph: number;
+  condition: string;
+  paving_status: 'GO' | 'NO-GO';
+  nogo_reason: string | null;
+  mock: boolean;
+}
+
+function WeatherModule({ authKey, apiBase }: { authKey: string; apiBase: string }) {
+  const [current, setCurrent] = useState<WeatherCurrent | null>(null);
+  const [forecast, setForecast] = useState<WeatherForecast | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const reload = useCallback(() => {
+    setLoading(true);
+    Promise.all([
+      fetch(`${apiBase}/api/v1/weather/current`, { headers: { 'X-Master-Key': authKey } }).then((r) => r.ok ? r.json() : null),
+      fetch(`${apiBase}/api/v1/weather/forecast?days=7`, { headers: { 'X-Master-Key': authKey } }).then((r) => r.ok ? r.json() : null),
+    ]).then(([cur, fcast]) => {
+      if (cur) setCurrent(cur);
+      if (fcast) setForecast(fcast);
+    }).finally(() => setLoading(false));
+  }, [authKey, apiBase]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const goCount = forecast?.paving_windows.length ?? 0;
+  const nogoCount = (forecast?.forecast.length ?? 0) - goCount;
+
+  const dayLabel = (dateStr: string) => {
+    const d = new Date(dateStr + 'T12:00:00');
+    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <h3 className="text-white font-black">Weather / Paving GO Window</h3>
+        <div className="flex items-center gap-2">
+          {current?.mock && <span className="text-xs text-zinc-500 italic">mock data</span>}
+          <button onClick={reload} className="text-zinc-500 hover:text-white transition-colors">
+            <RefreshCw size={14} />
+          </button>
+          <LiveBadge />
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="text-zinc-500 text-sm py-12 text-center">Fetching weather…</div>
+      ) : (
+        <>
+          {/* Current conditions hero */}
+          {current && (
+            <OSCard accent={current.paving_status === 'GO'}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-zinc-500 text-xs uppercase font-semibold mb-1">Richmond, VA — Now</p>
+                  <p className="text-white font-black text-4xl">{current.temp_f}°F</p>
+                  <p className="text-zinc-400 text-sm mt-1">{current.condition}</p>
+                  <div className="flex items-center gap-4 mt-2 text-xs text-zinc-500">
+                    <span className="flex items-center gap-1"><CloudRain size={11} /> {current.precip_probability_pct}% precip</span>
+                    <span className="flex items-center gap-1"><Wind size={11} /> {current.wind_mph.toFixed(0)} mph</span>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className={`text-3xl font-black px-4 py-2 rounded-2xl ${
+                    current.paving_status === 'GO'
+                      ? 'text-green-400 bg-green-500/20'
+                      : 'text-red-400 bg-red-500/20'
+                  }`}>{current.paving_status}</span>
+                  {current.nogo_reason && (
+                    <p className="text-red-400 text-xs mt-2 max-w-[180px] text-right">{current.nogo_reason}</p>
+                  )}
+                </div>
+              </div>
+            </OSCard>
+          )}
+
+          {/* 7-day summary */}
+          {forecast && (
+            <div className="grid grid-cols-3 gap-3">
+              <OSCard accent>
+                <p className="text-zinc-500 text-xs mb-1">GO Days (7d)</p>
+                <p className="text-green-400 font-black text-3xl">{goCount}</p>
+              </OSCard>
+              <OSCard>
+                <p className="text-zinc-500 text-xs mb-1">NO-GO Days</p>
+                <p className="text-red-400 font-black text-3xl">{nogoCount}</p>
+              </OSCard>
+              <OSCard>
+                <p className="text-zinc-500 text-xs mb-1">Next GO Day</p>
+                <p className="text-white font-black text-sm mt-1">
+                  {forecast.next_go_day ? dayLabel(forecast.next_go_day) : 'None'}
+                </p>
+              </OSCard>
+            </div>
+          )}
+
+          {/* 7-day strip */}
+          {forecast && (
+            <OSCard>
+              <p className="text-zinc-500 text-xs font-semibold uppercase mb-3">7-Day Paving Forecast</p>
+              <div className="space-y-2">
+                {forecast.forecast.map((day) => (
+                  <div key={day.date}
+                    className={`flex items-center gap-3 p-2 rounded-xl ${
+                      day.paving_status === 'GO' ? 'bg-green-500/5 border border-green-500/20' : 'bg-zinc-800/50'
+                    }`}>
+                    <span className={`text-xs font-bold w-14 shrink-0 ${
+                      day.paving_status === 'GO' ? 'text-green-400' : 'text-red-400'
+                    }`}>{day.paving_status}</span>
+                    <span className="text-zinc-400 text-xs w-24 shrink-0">{dayLabel(day.date)}</span>
+                    <span className="text-white text-xs font-semibold">{day.temp_max_f}°/{day.temp_min_f}°F</span>
+                    <span className="text-zinc-500 text-xs flex-1">{day.condition}</span>
+                    <span className="text-zinc-600 text-xs shrink-0 flex items-center gap-1">
+                      <CloudRain size={10} />{day.precip_probability_pct}%
+                    </span>
+                    <span className="text-zinc-600 text-xs shrink-0 flex items-center gap-1">
+                      <Wind size={10} />{day.wind_max_mph.toFixed(0)}
+                    </span>
+                    {day.nogo_reason && (
+                      <span className="text-red-400/60 text-xs hidden sm:block shrink-0 max-w-[160px] truncate">{day.nogo_reason}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </OSCard>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -1917,9 +2419,10 @@ export function OSPage() {
             {activeModule === 'catalog'        && <CatalogModule {...sharedProps} />}
             {activeModule === 'quickbooks'     && <QuickBooksModule {...sharedProps} />}
             {activeModule === 'saas'           && <SaasAdminModule {...sharedProps} />}
-            {activeModule === 'bim'            && <BimModule />}
+            {activeModule === 'bim'            && <BimModule {...sharedProps} />}
             {activeModule === 'jarvis-faces'   && <JarvisFacesModule {...sharedProps} />}
-            {!kpi && !['jarvis','thermal','roller','drone','crew','math-ai','gantt','catalog','quickbooks','saas','bim','jarvis-faces'].includes(activeModule) && (
+            {activeModule === 'weather'        && <WeatherModule {...sharedProps} />}
+            {!kpi && !['jarvis','thermal','roller','drone','crew','math-ai','gantt','catalog','quickbooks','saas','bim','jarvis-faces','weather'].includes(activeModule) && (
               <div className="text-zinc-500 text-sm text-center py-12">Loading data…</div>
             )}
           </div>
