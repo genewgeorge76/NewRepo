@@ -1,12 +1,39 @@
 {
-  "name": "J. Worden & Sons Paving",
-  "short_name": "J. Worden & Sons",
-  "description": "4th-generation asphalt paving contractor — Richmond, VA metro",
-  "start_url": "/",
+  "name": "J. Worden & Sons Paving — Construction OS",
+  "short_name": "Worden OS",
+  "description": "4th-generation asphalt paving contractor — Richmond, VA metro. Jarvis AI operating system.",
+  "start_url": "/os",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#0a0a0a",
   "theme_color": "#f5a623",
+  "categories": ["business", "productivity"],
   "icons": [
-    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }
-  ]
+    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "maskable" },
+    { "src": "/favicon.ico",           "sizes": "48x48",   "type": "image/x-icon" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Jarvis AI",
+      "short_name": "Jarvis",
+      "url": "/os#jarvis-faces",
+      "description": "Open Jarvis three-faces AI"
+    },
+    {
+      "name": "Gantt Schedule",
+      "short_name": "Schedule",
+      "url": "/os#gantt",
+      "description": "View project schedule"
+    },
+    {
+      "name": "Material Catalog",
+      "short_name": "Catalog",
+      "url": "/os#catalog",
+      "description": "Browse live pricing catalog"
+    }
+  ],
+  "screenshots": [],
+  "prefer_related_applications": false
 }
