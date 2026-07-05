@@ -76,7 +76,7 @@ Complete superset of Worden Standard v4 (internal ops tool). Every v4 station, f
 - Command palette ⌘K — instant navigation to any of 21 stations by name or alias
 - All data persisted to `localStorage` for offline field use
 - 10-day paving GO/CAUTION/NO-GO forecast via Open-Meteo (mini forecast strip on Home)
-- 51-state legal database in `packages/core/src/legal.ts` (14 states fully detailed)
+- 51-state legal database in `packages/core/src/legal.ts` (all 50 states + DC fully detailed)
 - 48 trade types across 14 groups in `packages/core/src/trades.ts`
 - Dispatch: weekly schedule view, crew assignments
 - Safety: OSHA incident log, TRIR/DART rate, recent incidents

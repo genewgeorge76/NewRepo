@@ -1,8 +1,10 @@
 """
 lien_calendar.py — Mechanics lien deadline calculator.
 
-State-specific lien law data for 13 states. Provides calculate_deadlines()
-and get_upcoming_deadlines() for the lien calendar router.
+State-specific lien law data for all 51 U.S. jurisdictions (50 states + DC).
+Provides calculate_deadlines() and get_upcoming_deadlines() for the lien
+calendar router. Deadlines reflect the general original-contractor rule per
+state; subcontractor/supplier variations are summarized in each entry's notes.
 """
 from __future__ import annotations
 
@@ -90,6 +92,234 @@ _LIEN_LAWS: dict[str, dict] = {
         'lien_filing_days': 120,
         'foreclosure_days': 730,
         'notes': 'File lien within 4 months of last furnishing.',
+    },
+    'AL': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 180,
+        'foreclosure_days': 180,
+        'notes': 'Original contractors: verified lien statement within 6 months of last work. Suppliers: 4 months.',
+    },
+    'AK': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 90,
+        'foreclosure_days': 180,
+        'notes': 'Claim of lien within 90 days of last furnishing (120 if no notice of completion recorded).',
+    },
+    'AZ': {
+        'preliminary_notice_days': 20,
+        'lien_filing_days': 120,
+        'foreclosure_days': 180,
+        'notes': '20-day preliminary notice required. File within 120 days of completion (60 if notice of completion recorded). Owner-occupied residential largely exempt.',
+    },
+    'AR': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 120,
+        'foreclosure_days': 456,
+        'notes': 'File within 120 days of last furnishing. Residential: pre-construction notice required; subs/suppliers give 75-day notice.',
+    },
+    'CO': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 120,
+        'foreclosure_days': 180,
+        'notes': 'File within 4 months of last work (labor-only: 2 months). Serve Notice of Intent 10 days before recording.',
+    },
+    'CT': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 90,
+        'foreclosure_days': 365,
+        'notes': 'File within 90 days of ceasing work; serve owner within 30 days of recording.',
+    },
+    'DE': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 180,
+        'foreclosure_days': 180,
+        'notes': 'Original contractors: statement of claim within 180 days after completion (subs: 120 days from last work).',
+    },
+    'DC': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 90,
+        'foreclosure_days': 180,
+        'notes': 'Record notice of lien within 90 days after completion or termination.',
+    },
+    'HI': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 45,
+        'foreclosure_days': 90,
+        'notes': 'Application for lien within 45 days after completion — shortest window in the U.S. Court hearing required.',
+    },
+    'ID': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 90,
+        'foreclosure_days': 180,
+        'notes': 'File within 90 days of last furnishing; serve owner within 5 business days.',
+    },
+    'IN': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 90,
+        'foreclosure_days': 365,
+        'notes': 'Notice of intention within 90 days of last work (owner-occupied residential: 60 days).',
+    },
+    'IA': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 90,
+        'foreclosure_days': 730,
+        'notes': 'Post via MNLR within 90 days of last furnishing for full priority. Residential requires early MNLR notices.',
+    },
+    'KS': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 120,
+        'foreclosure_days': 365,
+        'notes': 'File lien statement within 4 months of last furnishing (subs: 3 months + residential warning statement).',
+    },
+    'KY': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 180,
+        'foreclosure_days': 365,
+        'notes': 'File within 6 months of last work. Owner-occupied residential: written notice within 75 days.',
+    },
+    'LA': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 60,
+        'foreclosure_days': 365,
+        'notes': 'Statement of claim within 60 days after notice of termination or substantial completion (some residential sub claims: 70 days).',
+    },
+    'ME': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 90,
+        'foreclosure_days': 120,
+        'notes': 'File within 90 days of last furnishing; enforce within 120 days of last furnishing.',
+    },
+    'MA': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 90,
+        'foreclosure_days': 90,
+        'notes': 'Record notice of contract within 90 days of last furnishing; statement of account within 120 days. Strict statutory sequence.',
+    },
+    'MN': {
+        'preliminary_notice_days': 45,
+        'lien_filing_days': 120,
+        'foreclosure_days': 365,
+        'notes': 'Pre-lien notice within 45 days. File within 120 days of last furnishing.',
+    },
+    'MS': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 90,
+        'foreclosure_days': 180,
+        'notes': 'Claim of lien within 90 days of last work; subs/suppliers must have given pre-lien notice.',
+    },
+    'MO': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 180,
+        'foreclosure_days': 180,
+        'notes': 'File within 6 months of last work. Residential: consent-of-owner notice; subs give 10-day notice of intent.',
+    },
+    'MT': {
+        'preliminary_notice_days': 20,
+        'lien_filing_days': 90,
+        'foreclosure_days': 730,
+        'notes': 'Residential subs/suppliers: notice of right to claim within 20 days of first furnishing. File within 90 days.',
+    },
+    'NE': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 120,
+        'foreclosure_days': 730,
+        'notes': 'Record within 120 days of last furnishing. Residential protected-party rules limit lien amount.',
+    },
+    'NV': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 90,
+        'foreclosure_days': 180,
+        'notes': 'Record within 90 days after completion/last furnishing. Subs/suppliers: notice of right to lien required.',
+    },
+    'NH': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 120,
+        'foreclosure_days': 120,
+        'notes': 'Lien secured by court attachment within 120 days of last furnishing.',
+    },
+    'NM': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 120,
+        'foreclosure_days': 730,
+        'notes': 'Original contractors: file within 120 days of completion (subs/suppliers: 90 days + residential pre-lien notice).',
+    },
+    'ND': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 90,
+        'foreclosure_days': 1095,
+        'notes': 'Record within 90 days of last furnishing for full priority; serve 10-day notice of intent first.',
+    },
+    'OK': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 120,
+        'foreclosure_days': 365,
+        'notes': 'Original contractors: file within 4 months of last furnishing (subs: 90 days; >$10K claims need pre-lien notice).',
+    },
+    'OR': {
+        'preliminary_notice_days': 8,
+        'lien_filing_days': 75,
+        'foreclosure_days': 120,
+        'notes': 'Record within 75 days of last furnishing or completion, whichever first. Residential subs: 8-day notice of right to lien.',
+    },
+    'RI': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 200,
+        'foreclosure_days': 40,
+        'notes': 'Notice of intention within 200 days of doing work; enforce within 40 days after.',
+    },
+    'SC': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 90,
+        'foreclosure_days': 180,
+        'notes': 'File and serve within 90 days of last furnishing; enforce within 6 months.',
+    },
+    'SD': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 120,
+        'foreclosure_days': 730,
+        'notes': 'File lien statement within 120 days of last furnishing. Owner demand can compel suit in 30 days.',
+    },
+    'TN': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 90,
+        'foreclosure_days': 365,
+        'notes': 'Record within 90 days of completion for priority; subs serve monthly notices of nonpayment + 90-day notice of lien.',
+    },
+    'UT': {
+        'preliminary_notice_days': 20,
+        'lien_filing_days': 180,
+        'foreclosure_days': 180,
+        'notes': 'Preliminary notice via State Construction Registry within 20 days of starting. Notice of lien within 180 days of completion.',
+    },
+    'VT': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 180,
+        'foreclosure_days': 180,
+        'notes': 'Record memorandum of lien within 180 days of when payment became due for last work.',
+    },
+    'WA': {
+        'preliminary_notice_days': 10,
+        'lien_filing_days': 90,
+        'foreclosure_days': 240,
+        'notes': 'Record within 90 days of last furnishing; suppliers/subs give pre-claim notice (60/10-day rules). Enforce within 8 months.',
+    },
+    'WV': {
+        'preliminary_notice_days': None,
+        'lien_filing_days': 100,
+        'foreclosure_days': 180,
+        'notes': 'Record within 100 days of last furnishing (all tiers); serve owner within same window.',
+    },
+    'WI': {
+        'preliminary_notice_days': 10,
+        'lien_filing_days': 180,
+        'foreclosure_days': 730,
+        'notes': 'Residential primes: 2 statutory notices. Record within 6 months of last work; serve notice of intent ≥30 days before.',
+    },
+    'WY': {
+        'preliminary_notice_days': 20,
+        'lien_filing_days': 150,
+        'foreclosure_days': 180,
+        'notes': 'Contractors: record within 150 days of last work (subs/suppliers: 120). 20-day pre-lien notice + 10-day notice of intent.',
     },
 }
 
