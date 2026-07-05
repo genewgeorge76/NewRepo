@@ -34,8 +34,16 @@ from .routers import (
 )
 
 
+_DEFAULT_SECRETS = {'change-me', 'change-me-jwt'}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if settings.environment == 'production':
+        if settings.jworden_master_key in _DEFAULT_SECRETS:
+            raise RuntimeError('JWORDEN_MASTER_KEY is still the default value — refusing to start in production. Generate one with: openssl rand -hex 32')
+        if settings.jwt_secret_key in _DEFAULT_SECRETS:
+            raise RuntimeError('JWT_SECRET_KEY is still the default value — refusing to start in production. Generate one with: openssl rand -hex 32')
     Base.metadata.create_all(bind=engine)
     yield
 

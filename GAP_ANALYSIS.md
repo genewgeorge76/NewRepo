@@ -1,5 +1,22 @@
 # GAP ANALYSIS — Worden Standard v5 vs Source Repos
-*Generated 2026-06-20. Wave 1 completed 2026-06-20. Wave 2 completed 2026-06-20. Wave 3 completed 2026-06-20. Wave 4 completed 2026-06-20. Wave 5 (hardening & verification) completed 2026-06-21. Worden Standard v4 audit completed 2026-06-20 — apps/ops is now a full superset. Source repos treated as read-only.*
+*Generated 2026-06-20. Wave 1 completed 2026-06-20. Wave 2 completed 2026-06-20. Wave 3 completed 2026-06-20. Wave 4 completed 2026-06-20. Wave 5 (hardening & verification) completed 2026-06-21. Worden Standard v4 audit completed 2026-06-20 — apps/ops is now a full superset. Wave 7 (51-state completion) completed 2026-07-05. Source repos treated as read-only.*
+
+---
+
+## Wave 7 — 51-State Completion — Completed 2026-07-05
+
+**Scope:** True 51-jurisdiction coverage (50 states + DC) in every state-aware dataset, plus the M1 security blocker.
+
+| # | Deliverable | Status | Notes |
+|---|---|---|---|
+| 1 | **STATE_LEGAL → 51 jurisdictions** | ✓ Done | `packages/core/src/legal.ts` expanded 13 → 51 (licensing, bond, lien, classification, prevailing wage, OSHA, CE). Ops Legal station now lists all 51. SC OSHA corrected (state plan, not federal). |
+| 2 | **Lien calendar → 51 jurisdictions** | ✓ Done | `services/lien_calendar.py` expanded 13 → 51 original-contractor deadline rules; sub/supplier variations in notes. No state falls back to default rules. |
+| 3 | **M1: startup secret assertion** | ✓ Done | `main.py` lifespan raises `RuntimeError` in production if `JWORDEN_MASTER_KEY`/`JWT_SECRET_KEY` are defaults. |
+| 4 | **51-state test suite** | ✓ Done | `tests/test_states_51.py` (lien + pricing coverage, deadline ordering, /states endpoint) + `tests/test_security_startup.py` (M1). 76 tests total, all passing. |
+
+**Remaining open items (unchanged):** M2 (JWT revocation), M3 (portal magic link email), M4 (2FA enforcement), L4 (imagery ToS).
+
+**Legal-data caveat:** state summaries and lien deadlines are working references compiled 2026-07 — every mailer/deadline still carries the verify-with-an-attorney disclaimer, and the data should be reviewed by counsel before being relied on in a new state.
 
 ---
 
@@ -28,7 +45,7 @@
 
 | # | Item | Severity | Notes |
 |---|---|---|---|
-| M1 | Startup assertion on default secrets | MEDIUM | Add `RuntimeError` in `lifespan` if `JWORDEN_MASTER_KEY == 'change-me'` in production |
+| M1 | Startup assertion on default secrets | ~~MEDIUM~~ ✓ Done Wave 7 | `lifespan` raises `RuntimeError` on default secrets in production |
 | M2 | JWT revocation (TokenBlocklist) | MEDIUM | Needed if key rotation required < 24h window |
 | M3 | Portal magic link email delivery | MEDIUM | Currently returns token directly; implement SendGrid path before enabling customer portal |
 | M4 | 2FA enforcement on main auth flow | MEDIUM | Optional enhancement — 2FA enroll works but isn't required for master-key auth |
