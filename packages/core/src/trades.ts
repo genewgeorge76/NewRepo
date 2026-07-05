@@ -62,6 +62,20 @@ export const TRADES: Record<string, TradeSpec> = {
   floor_hw:  { label: 'Hardwood Flooring', category: 'interior', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
   floor_tile:{ label: 'Tile Flooring', category: 'interior', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
   insul:     { label: 'Insulation', category: 'interior', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  // Whole-Project Remodeling (interior)
+  kitchen_remodel:  { label: 'Kitchen Remodel', category: 'remodel', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  bath_remodel:     { label: 'Bathroom Remodel', category: 'remodel', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  basement_finish:  { label: 'Basement Finishing', category: 'remodel', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  home_addition:    { label: 'Home Addition', category: 'remodel', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  garage_build:     { label: 'Garage Build', category: 'remodel', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  demo_interior:    { label: 'Interior Demolition', category: 'remodel', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  cabinets:         { label: 'Cabinet Install', category: 'remodel', defaultDensity: null, unit: 'lnft', depthUnit: null, costLabel: '$/lnft' },
+  countertops:      { label: 'Countertops', category: 'remodel', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  // Exterior Envelope
+  siding:      { label: 'Siding', category: 'exterior', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
+  windows:     { label: 'Window Replacement', category: 'exterior', defaultDensity: null, unit: 'unit', depthUnit: null, costLabel: '$/window' },
+  ext_doors:   { label: 'Exterior Doors', category: 'exterior', defaultDensity: null, unit: 'unit', depthUnit: null, costLabel: '$/door' },
+  porch:       { label: 'Porch / Portico', category: 'exterior', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },
   // Specialty
   weld:     { label: 'Welding / Fabrication', category: 'specialty', defaultDensity: null, unit: 'hr', depthUnit: null, costLabel: '$/hr' },
   pool:     { label: 'Pool Construction', category: 'specialty', defaultDensity: null, unit: 'sqft', depthUnit: null, costLabel: '$/sqft' },

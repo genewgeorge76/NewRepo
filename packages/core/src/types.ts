@@ -15,6 +15,8 @@ export type TradeCategory =
   | 'painting'
   | 'landscaping'
   | 'interior'
+  | 'remodel'
+  | 'exterior'
   | 'specialty';
 
 export type UnitType = 'sqft' | 'lnft' | 'cuyd' | 'unit' | 'hr';

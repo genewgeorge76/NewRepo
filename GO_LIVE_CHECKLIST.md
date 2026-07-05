@@ -147,7 +147,7 @@ Run the full test suite — must be green:
 cd apps/api
 pip install -r requirements.txt -r requirements-test.txt
 pytest tests/ --timeout=30 -q
-# Expected: 76 passed
+# Expected: 118 passed
 ```
 
 ### 5b. Manual Smoke Tests (Production Environment)

@@ -31,6 +31,9 @@ from .routers import (
     jarvis_modes,
     bim,
     weather,
+    # Wave 8 — advisor + road-scanning stack
+    advisor,
+    pavement,
 )
 
 
@@ -87,6 +90,8 @@ app.include_router(blog.router, prefix='/api/v1')
 app.include_router(payments.router, prefix='/api/v1')
 app.include_router(voice.router, prefix='/api/v1')
 app.include_router(lien_calendar.router, prefix='/api/v1')
+app.include_router(advisor.router, prefix='/api/v1')
+app.include_router(pavement.router, prefix='/api/v1')
 app.include_router(customers.router, prefix='/api/v1')
 app.include_router(crm.router, prefix='/api/v1')
 

@@ -3,6 +3,22 @@
 
 ---
 
+## Wave 8 — Advisor + Road-Scanning Stack — Completed 2026-07-05
+
+**Scope:** Deep-research port from WordenEnterpriseOS (`doooooone`): the 51-state legal advisor ("supreme court logic"), the civil-tech road-scanning stack, and full interior/exterior remodeling pricing.
+
+| # | Deliverable | Status | Notes |
+|---|---|---|---|
+| 1 | **Legal advisor engine** | ✓ Done | `services/lawyer_recommender.py` + `services/contractor_ranker.py` ported verbatim (51-state dispute scoring: lien/payment/contract; strategy playbooks; reciprocity + license optimizer). Router `routers/advisor.py`: /legal-strategy, /top-states, /reciprocity-ranking, /license-optimizer, /rank-contractors, /utility-risk. All responses carry not-legal-advice disclaimers. |
+| 2 | **Pavement intelligence** | ✓ Done | `services/pavement_intel.py` — pure-Python port of the math-AI pavement models (no numpy/scipy dependency): ASTM D6433-calibrated PCI scoring, exponential-decay maintenance forecasting. |
+| 3 | **Road-scanning stack** | ✓ Done | Same service: 811/ground-scan risk analysis (persisted via new `GroundScanReport` model), age-decay simulation, and the 7-module premium civil stack with GO/CONDITIONAL/HOLD decision. Router `routers/pavement.py`: /score, /forecast, /decay (public), /ground-scan, /ground-scans, /civil-stack (auth). |
+| 4 | **Interior/exterior remodeling** | ✓ Done | Pricing engine +14 services (kitchen/bath/basement/addition/garage/demo/drywall/flooring/int+ext painting/insulation/roofing/siding/decks). `trades.ts` +12 trade types in new `remodel` and `exterior` categories (58 total). |
+| 5 | **Tests** | ✓ Done | `tests/test_advisor.py` + `tests/test_pavement.py` — 42 new tests. Suite now 118, all passing; typecheck clean. |
+
+**Not ported (needs external keys/deps — see recommendations):** OpenCV image-measure takeoff, Google Solar/Aerial View APIs, drone/LiDAR ingest, compaction telemetry, roller sessions, crew wearables.
+
+---
+
 ## Wave 7 — 51-State Completion — Completed 2026-07-05
 
 **Scope:** True 51-jurisdiction coverage (50 states + DC) in every state-aware dataset, plus the M1 security blocker.

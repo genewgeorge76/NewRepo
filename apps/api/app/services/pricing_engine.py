@@ -17,6 +17,22 @@ _RATES: dict[str, dict[str, tuple[float, float]]] = {
     'line_striping':       {'residential': (0.10, 0.25),  'commercial': (0.08, 0.20)},
     'chip_seal':           {'residential': (1.50, 3.50),  'commercial': (1.25, 3.00)},
     'milling':             {'residential': (1.00, 2.50),  'commercial': (0.80, 2.00)},
+    # ── Interior remodeling ($/sqft of remodeled area) ────────────────────────
+    'kitchen_remodel':     {'residential': (75.0, 250.0), 'commercial': (60.0, 200.0)},
+    'bathroom_remodel':    {'residential': (120.0, 400.0),'commercial': (100.0, 300.0)},
+    'basement_finish':     {'residential': (30.0, 75.0),  'commercial': (25.0, 60.0)},
+    'home_addition':       {'residential': (110.0, 300.0),'commercial': (100.0, 250.0)},
+    'garage_build':        {'residential': (35.0, 70.0),  'commercial': (30.0, 65.0)},
+    'interior_demolition': {'residential': (2.0, 8.0),    'commercial': (2.0, 7.0)},
+    'drywall':             {'residential': (1.50, 3.50),  'commercial': (1.40, 3.00)},
+    'flooring':            {'residential': (4.0, 15.0),   'commercial': (3.50, 12.0)},
+    'interior_painting':   {'residential': (2.0, 6.0),    'commercial': (1.50, 5.0)},
+    'insulation':          {'residential': (1.0, 4.50),   'commercial': (1.0, 4.0)},
+    # ── Exterior remodeling ($/sqft unless noted) ─────────────────────────────
+    'roofing':             {'residential': (4.50, 12.0),  'commercial': (4.0, 10.0)},
+    'siding':              {'residential': (3.0, 12.0),   'commercial': (3.0, 10.0)},
+    'exterior_painting':   {'residential': (1.50, 4.50),  'commercial': (1.25, 4.0)},
+    'deck_construction':   {'residential': (25.0, 65.0),  'commercial': (30.0, 70.0)},
 }
 
 # Per-state cost multiplier (1.0 = national baseline; >1.0 = higher cost market)
