@@ -767,3 +767,22 @@ class QuickBooksSync(Base):
     raw_response = Column(Text, nullable=True)
     synced_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
+
+
+class GroundScanReport(Base):
+    """811 / subsurface utility locate scan report (Wave 8 road-scanning stack)."""
+    __tablename__ = 'ground_scan_reports'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(64), default='default', index=True)
+    address = Column(String(300), nullable=True)
+    scan_area_sqft = Column(Float, nullable=True)
+    ticket_811 = Column(String(100), nullable=True)
+    ticket_status = Column(String(40), nullable=True)      # not_started | requested | clear | conflict | expired
+    technologies = Column(Text, nullable=True)             # JSON array of scan technologies used
+    utilities = Column(Text, nullable=True)                # JSON array of utility findings
+    risk_level = Column(String(10), nullable=True)         # LOW | MEDIUM | HIGH
+    confidence = Column(Float, nullable=True)
+    recommendation = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
