@@ -25,7 +25,7 @@ function save<T>(key: string, val: T) {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type Station = 'home' | 'jarvis' | 'estimate' | 'jobs' | 'crew' | 'equipment' | 'weather' | 'banking' | 'legal' | 'crm' | 'lien' | 'dispatch' | 'safety' | 'cashflow' | 'market' | 'workforce' | 'proposals' | 'operations' | 'subcontractors' | 'foreman' | 'permits' | 'scan-campaign';
+type Station = 'home' | 'jarvis' | 'estimate' | 'jobs' | 'crew' | 'equipment' | 'weather' | 'banking' | 'legal' | 'crm' | 'lien' | 'dispatch' | 'safety' | 'cashflow' | 'market' | 'workforce' | 'proposals' | 'operations' | 'subcontractors' | 'foreman' | 'permits' | 'scan-campaign' | 'roadscan' | 'advisor';
 type AutoMode = 'manual' | 'hybrid' | 'auto';
 
 interface JarvisMsg { role: 'jarvis' | 'user'; text: string; }
@@ -61,6 +61,8 @@ const NAV: { id: Station; icon: string; label: string }[] = [
   { id: 'proposals',     icon: '✉', label: 'Proposals'    },
   { id: 'market',        icon: '⚑', label: 'Market'       },
   { id: 'scan-campaign', icon: '◈', label: 'Scan Mail'    },
+  { id: 'roadscan',      icon: '◭', label: 'Road Scan'    },
+  { id: 'advisor',       icon: '♔', label: 'Advisor'      },
 ];
 
 const JOB_STATUSES: Job['status'][] = [
@@ -278,7 +280,7 @@ export default function App() {
   const execCmd = useCallback((q: string) => {
     setCmd(false);
     const c = q.replace('/', '').toLowerCase().trim();
-    const stationMap: Record<string, Station> = { home:'home', jarvis:'jarvis', estimate:'estimate', jobs:'jobs', crew:'crew', equipment:'equipment', weather:'weather', banking:'banking', legal:'legal', crm:'crm', lien:'lien', dispatch:'dispatch', foreman:'foreman', workforce:'workforce', operations:'operations', subcontractors:'subcontractors', subs:'subcontractors', safety:'safety', cashflow:'cashflow', permits:'permits', proposals:'proposals', market:'market', 'scan-campaign':'scan-campaign', scan:'scan-campaign', mail:'scan-campaign' };
+    const stationMap: Record<string, Station> = { home:'home', jarvis:'jarvis', estimate:'estimate', jobs:'jobs', crew:'crew', equipment:'equipment', weather:'weather', banking:'banking', legal:'legal', crm:'crm', lien:'lien', dispatch:'dispatch', foreman:'foreman', workforce:'workforce', operations:'operations', subcontractors:'subcontractors', subs:'subcontractors', safety:'safety', cashflow:'cashflow', permits:'permits', proposals:'proposals', market:'market', 'scan-campaign':'scan-campaign', scan:'scan-campaign', mail:'scan-campaign', roadscan:'roadscan', road:'roadscan', pavement:'roadscan', advisor:'advisor', strategy:'advisor' };
     if (stationMap[c]) { setStation(stationMap[c]); return; }
     setJInput(q);
     setStation('jarvis');
@@ -353,7 +355,7 @@ export default function App() {
       <div style={{ flex:1, overflowY:'auto', display:'flex', flexDirection:'column' }}>
         {/* Header bar */}
         <div style={{ padding:'6px 18px', borderBottom:'1px solid rgba(255,255,255,0.03)', display:'flex', alignItems:'center', justifyContent:'space-between', minHeight:34, flexShrink:0 }}>
-          <div style={{ fontSize:15, fontWeight:600, color:'#e0e2e8' }}>{{ home:'Home', jarvis:'Jarvis', estimate:'New Estimate', jobs:'Jobs', crew:'Crew', equipment:'Equipment', weather:'Weather', banking:'Banking', legal:'Legal / Compliance', crm:'CRM', lien:'Lien Calendar', dispatch:'Dispatch', foreman:'Foreman Check-In', workforce:'Workforce', operations:'Operations / Work Orders', subcontractors:'Subcontractors', safety:'Safety / OSHA', cashflow:'Cash Flow', permits:'Permit Leads', proposals:'Proposals', market:'Market Intelligence', 'scan-campaign':'Scan → Mail Campaigns' }[station]}</div>
+          <div style={{ fontSize:15, fontWeight:600, color:'#e0e2e8' }}>{{ home:'Home', jarvis:'Jarvis', estimate:'New Estimate', jobs:'Jobs', crew:'Crew', equipment:'Equipment', weather:'Weather', banking:'Banking', legal:'Legal / Compliance', crm:'CRM', lien:'Lien Calendar', dispatch:'Dispatch', foreman:'Foreman Check-In', workforce:'Workforce', operations:'Operations / Work Orders', subcontractors:'Subcontractors', safety:'Safety / OSHA', cashflow:'Cash Flow', permits:'Permit Leads', proposals:'Proposals', market:'Market Intelligence', 'scan-campaign':'Scan → Mail Campaigns', roadscan:'Road Scan / Pavement Intel', advisor:'Legal Advisor — 51 States' }[station]}</div>
           <div style={{ fontSize:11, color:'rgba(255,255,255,0.1)', display:'flex', gap:12, alignItems:'center' }}>
             {todayDecision && <span style={{ color: DECISION_COLOR[todayDecision], fontWeight:700, fontSize:11 }}>PAVING: {todayDecision}</span>}
             {now.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' })}
@@ -937,6 +939,14 @@ export default function App() {
           {/* ── SCAN CAMPAIGNS ── */}
           {station === 'scan-campaign' && (
             <ScanCampaignStation apiBase={import.meta.env.VITE_API_BASE_URL || ''} masterKey={import.meta.env.VITE_MASTER_KEY || ''} />
+          )}
+
+          {station === 'roadscan' && (
+            <RoadScanStation apiBase={import.meta.env.VITE_API_BASE_URL || ''} masterKey={import.meta.env.VITE_MASTER_KEY || ''} />
+          )}
+
+          {station === 'advisor' && (
+            <AdvisorStation apiBase={import.meta.env.VITE_API_BASE_URL || ''} masterKey={import.meta.env.VITE_MASTER_KEY || ''} />
           )}
 
         </div>
@@ -1659,6 +1669,195 @@ function ScanCampaignStation({ apiBase, masterKey }: StationProps) {
               {p.result?.narrative && (
                 <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', marginTop: 4, fontStyle: 'italic', lineHeight: 1.5 }}>{p.result.narrative}</div>
               )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Wave 9 Stations — Road Scan + Legal Advisor ──────────────────────────────
+
+function RoadScanStation({ apiBase }: StationProps) {
+  const [age, setAge] = React.useState('8');
+  const [cracks, setCracks] = React.useState('15');
+  const [potholes, setPotholes] = React.useState('1');
+  const [traffic, setTraffic] = React.useState('medium');
+  const [busy, setBusy] = React.useState(false);
+  const [score, setScore] = React.useState<any>(null);
+  const [forecast, setForecast] = React.useState<any>(null);
+  const [decay, setDecay] = React.useState<any>(null);
+
+  const scoreColor = (s: number) => s >= 70 ? '#22c55e' : s >= 40 ? '#eab308' : '#ef4444';
+
+  const runScan = async () => {
+    setBusy(true);
+    try {
+      const body = { age: Number(age), cracks: Number(cracks), potholes: Number(potholes), traffic };
+      const sRes = await fetch(`${apiBase}/api/v1/pavement/score`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const s = await sRes.json();
+      setScore(s);
+      const [fRes, dRes] = await Promise.all([
+        fetch(`${apiBase}/api/v1/pavement/forecast`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pavement_age: Number(age), condition: s.score }) }),
+        fetch(`${apiBase}/api/v1/pavement/decay`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pavement_type: 'commercial_parking_lot', age_years: Number(age), current_condition_score: s.score, traffic_level: traffic === 'very_high' ? 'heavy_truck' : traffic, crack_severity: Number(cracks) > 30 ? 'high' : Number(cracks) > 10 ? 'medium' : 'low', potholes: Number(potholes) }) }),
+      ]);
+      setForecast(await fRes.json());
+      setDecay(await dRes.json());
+    } catch { /* network error — leave prior results */ }
+    setBusy(false);
+  };
+
+  const inp: React.CSSProperties = { width: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 5, color: '#e0e2e8', fontFamily: 'inherit', fontSize: 14, padding: '7px 11px', outline: 'none' };
+  const lbl: React.CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.25)', display: 'block', marginBottom: 5 };
+
+  return (
+    <div style={{ maxWidth: 720 }}>
+      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.12)', marginBottom: 12 }}>ASTM D6433-calibrated PCI scoring · exponential decay forecasting · maintenance calendar</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: 8, alignItems: 'end', marginBottom: 16 }}>
+        <div><span style={lbl}>Age (yrs)</span><input value={age} onChange={e => setAge(e.target.value)} style={inp} /></div>
+        <div><span style={lbl}>Cracking %</span><input value={cracks} onChange={e => setCracks(e.target.value)} style={inp} /></div>
+        <div><span style={lbl}>Potholes /1k sqft</span><input value={potholes} onChange={e => setPotholes(e.target.value)} style={inp} /></div>
+        <div><span style={lbl}>Traffic</span>
+          <select value={traffic} onChange={e => setTraffic(e.target.value)} style={{ ...inp, cursor: 'pointer' }}>
+            <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="very_high">Very High</option>
+          </select>
+        </div>
+        <button onClick={runScan} disabled={busy} style={{ background: '#f5a623', color: '#08090e', border: 'none', borderRadius: 5, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700, padding: '8px 18px', fontSize: 13 }}>{busy ? 'Scanning…' : 'Scan'}</button>
+      </div>
+
+      {score && (
+        <div style={{ display: 'flex', gap: 14, marginBottom: 16, alignItems: 'stretch' }}>
+          <div style={{ background: 'rgba(255,255,255,0.015)', borderRadius: 7, padding: '16px 22px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.04)' }}>
+            <div style={{ fontSize: 38, fontWeight: 700, color: scoreColor(score.score), fontVariantNumeric: 'tabular-nums' }}>{score.score}</div>
+            <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.2)' }}>PCI · {score.condition}</div>
+          </div>
+          <div style={{ flex: 1, background: 'rgba(255,255,255,0.015)', borderRadius: 7, padding: '12px 16px', border: '1px solid rgba(255,255,255,0.04)' }}>
+            <div style={{ fontSize: 13, color: '#e0e2e8', marginBottom: 6 }}>{score.recommended_action}</div>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)' }}>Urgency: <span style={{ color: score.urgency === 'immediate' ? '#ef4444' : '#eab308', fontWeight: 600 }}>{score.urgency}</span> · Confidence {Math.round((score.confidence ?? 0) * 100)}%</div>
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.15)', marginTop: 6 }}>Deductions — age {score.deductions?.age_deduction} · cracks {score.deductions?.crack_deduction} · potholes {score.deductions?.pothole_deduction}</div>
+          </div>
+        </div>
+      )}
+
+      {forecast && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#f5a623', marginBottom: 8 }}>Maintenance Calendar</div>
+          {(forecast.service_schedule || []).map((m: any) => (
+            <div key={m.service} style={{ display: 'flex', gap: 10, padding: '7px 12px', background: 'rgba(255,255,255,0.015)', borderRadius: 5, marginBottom: 3, alignItems: 'center', borderLeft: `2px solid ${m.status === 'overdue' ? '#ef4444' : 'rgba(245,166,35,0.3)'}` }}>
+              <span style={{ fontSize: 13, color: '#e0e2e8', width: 130 }}>{m.service}</span>
+              <span style={{ fontSize: 12, color: m.status === 'overdue' ? '#ef4444' : 'rgba(255,255,255,0.4)', fontWeight: m.status === 'overdue' ? 700 : 400 }}>{m.status === 'overdue' ? 'OVERDUE' : m.target_date}</span>
+              <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.15)', marginLeft: 'auto' }}>{m.years_from_now} yrs · PCI {m.pci_at_trigger}</span>
+            </div>
+          ))}
+          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.12)', marginTop: 6 }}>PCI projection — 1yr: {forecast.projected_pci_1yr} · 3yr: {forecast.projected_pci_3yr} · 5yr: {forecast.projected_pci_5yr}</div>
+        </div>
+      )}
+
+      {decay && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#f5a623', marginBottom: 8 }}>10-Year Decay Projection · {decay.annual_decay_points} pts/yr · risk {decay.risk_level}</div>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', height: 90 }}>
+            {(decay.projection || []).map((p: any) => (
+              <div key={p.year} style={{ flex: 1, textAlign: 'center' }}>
+                <div style={{ height: Math.max(4, p.condition_score * 0.7), background: scoreColor(p.condition_score), borderRadius: '3px 3px 0 0', opacity: 0.75 }} />
+                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 3 }}>{p.condition_score}</div>
+                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.12)' }}>yr {p.year}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'];
+
+function AdvisorStation({ apiBase }: StationProps) {
+  const [advState, setAdvState] = React.useState('VA');
+  const [dispute, setDispute] = React.useState('lien');
+  const [role, setRole] = React.useState('gc');
+  const [busy, setBusy] = React.useState(false);
+  const [rec, setRec] = React.useState<any>(null);
+  const [optimizer, setOptimizer] = React.useState<any[]>([]);
+
+  React.useEffect(() => {
+    fetch(`${apiBase}/api/v1/advisor/license-optimizer?top_n=10`)
+      .then(r => r.ok ? r.json() : { results: [] })
+      .then(d => setOptimizer(d.results || []))
+      .catch(() => {});
+  }, [apiBase]);
+
+  const analyze = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch(`${apiBase}/api/v1/advisor/legal-strategy`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state: advState, dispute_type: dispute, role }) });
+      setRec(await res.json());
+    } catch { /* keep prior */ }
+    setBusy(false);
+  };
+
+  const inp: React.CSSProperties = { width: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 5, color: '#e0e2e8', fontFamily: 'inherit', fontSize: 14, padding: '7px 11px', outline: 'none', cursor: 'pointer' };
+  const lbl: React.CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.25)', display: 'block', marginBottom: 5 };
+  const strengthColor: Record<string, string> = { green: '#22c55e', yellow: '#eab308', red: '#ef4444' };
+
+  const bar = (label: string, v: number) => (
+    <div style={{ marginBottom: 6 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'rgba(255,255,255,0.25)', marginBottom: 2 }}><span>{label}</span><span>{v}</span></div>
+      <div style={{ height: 4, background: 'rgba(255,255,255,0.04)', borderRadius: 2 }}>
+        <div style={{ height: 4, width: `${v}%`, background: v >= 75 ? '#22c55e' : v >= 55 ? '#eab308' : '#ef4444', borderRadius: 2 }} />
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ maxWidth: 760 }}>
+      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.12)', marginBottom: 12 }}>51-state dispute strength scoring + negotiation strategy · advisory only, not legal advice</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr 1.5fr auto', gap: 8, alignItems: 'end', marginBottom: 16 }}>
+        <div><span style={lbl}>State</span><select value={advState} onChange={e => setAdvState(e.target.value)} style={inp}>{US_STATES.map(s => <option key={s}>{s}</option>)}</select></div>
+        <div><span style={lbl}>Dispute</span>
+          <select value={dispute} onChange={e => setDispute(e.target.value)} style={inp}>
+            <option value="lien">Mechanics Lien</option><option value="payment">Payment / Prompt-Pay</option><option value="contract_breach">Contract Breach</option><option value="general">General</option>
+          </select>
+        </div>
+        <div><span style={lbl}>Your Role</span>
+          <select value={role} onChange={e => setRole(e.target.value)} style={inp}>
+            <option value="gc">General Contractor</option><option value="sub">Subcontractor</option><option value="supplier">Supplier</option><option value="owner">Owner</option>
+          </select>
+        </div>
+        <button onClick={analyze} disabled={busy} style={{ background: '#f5a623', color: '#08090e', border: 'none', borderRadius: 5, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700, padding: '8px 18px', fontSize: 13 }}>{busy ? 'Analyzing…' : 'Analyze'}</button>
+      </div>
+
+      {rec && rec.scores && (
+        <div style={{ display: 'flex', gap: 14, marginBottom: 16 }}>
+          <div style={{ width: 190, background: 'rgba(255,255,255,0.015)', borderRadius: 7, padding: '14px 16px', border: '1px solid rgba(255,255,255,0.04)' }}>
+            <div style={{ fontSize: 30, fontWeight: 700, color: strengthColor[rec.scores.color] || '#e0e2e8', textAlign: 'center' }}>{rec.scores.composite}</div>
+            <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: strengthColor[rec.scores.color], textAlign: 'center', marginBottom: 10 }}>{rec.scores.label} · {rec.state}</div>
+            {bar('Lien', rec.scores.lien)}
+            {bar('Payment', rec.scores.payment)}
+            {bar('Contract', rec.scores.contract)}
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: '#e0e2e8', marginBottom: 4 }}>{rec.strategy?.title}</div>
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', lineHeight: 1.6, marginBottom: 8 }}>{rec.strategy?.description}</div>
+            {(rec.strategy?.key_actions || []).map((a: string, i: number) => (
+              <div key={i} style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', padding: '4px 0 4px 14px', borderLeft: '2px solid rgba(245,166,35,0.25)', marginBottom: 3 }}>{a}</div>
+            ))}
+            {rec.strategy?.state_specific_note && <div style={{ fontSize: 11, color: '#f5a623', marginTop: 8, opacity: 0.8 }}>{rec.strategy.state_specific_note}</div>}
+          </div>
+        </div>
+      )}
+
+      {optimizer.length > 0 && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#f5a623', marginBottom: 8 }}>License Optimizer — Best Base States</div>
+          {optimizer.map((s: any) => (
+            <div key={s.abbr} style={{ display: 'flex', gap: 10, padding: '6px 12px', background: 'rgba(255,255,255,0.015)', borderRadius: 5, marginBottom: 3, alignItems: 'center' }}>
+              <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.2)', width: 18 }}>{s.rank}</span>
+              <span style={{ fontSize: 13, color: '#e0e2e8', width: 130 }}>{s.state}</span>
+              <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>recip {s.reciprocity_count} · scope {s.class_scope_score} · bond ${(s.bond_min_commercial || 0).toLocaleString()}</span>
+              <span style={{ fontSize: 11, fontWeight: 700, marginLeft: 'auto', color: s.optimizer_label === 'OPTIMAL' ? '#22c55e' : s.optimizer_label === 'GOOD' ? '#eab308' : 'rgba(255,255,255,0.25)' }}>{s.optimizer_score} {s.optimizer_label}</span>
             </div>
           ))}
         </div>

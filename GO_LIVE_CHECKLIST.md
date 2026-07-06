@@ -133,7 +133,7 @@ VITE_SENTRY_DSN=https://...@sentry.io/...
 These **must** be resolved before any real customer data enters the system (see SECURITY_REVIEW.md for details):
 
 - [x] **⚠ M1 — Change default secrets**: Confirm `JWORDEN_MASTER_KEY` and `JWT_SECRET_KEY` are freshly generated (not `'change-me'`). Startup assertion added 2026-07-05 — the API now refuses to boot in production with default secrets.
-- [ ] **⚠ M3 — Portal magic link**: Implement email delivery for `/portal/auth` before enabling customer portal. Currently returns token directly (dev shortcut).
+- [x] **⚠ M3 — Portal magic link**: Done 2026-07-05 — in production `/portal/auth` emails the link via SendGrid and never returns the token; set `SENDGRID_API_KEY` or the endpoint returns 503.
 - [ ] **⚠ L4 — Imagery ToS**: If running scan campaigns in production with real imagery, use Nearmap or EagleView, not Google Maps Static. See `imagery_service.py` ToS note.
 
 ---
@@ -147,7 +147,7 @@ Run the full test suite — must be green:
 cd apps/api
 pip install -r requirements.txt -r requirements-test.txt
 pytest tests/ --timeout=30 -q
-# Expected: 118 passed
+# Expected: 142 passed
 ```
 
 ### 5b. Manual Smoke Tests (Production Environment)

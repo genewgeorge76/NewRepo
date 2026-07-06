@@ -3,6 +3,26 @@
 
 ---
 
+## Wave 9 — Production Hardening — Completed 2026-07-05
+
+**Scope:** Close every remaining pre-launch software gap: CI on the real branch, migrations, auth hardening (M2/M3/M4), observability, and cockpit UI for the Wave 8 engines.
+
+| # | Deliverable | Status | Notes |
+|---|---|---|---|
+| 1 | **CI on master** | ✓ Done | `quality-gate.yml` now triggers on master push/PR — the 142-test suite runs on every push. |
+| 2 | **Alembic baseline** | ✓ Done | `migrations/` + env.py wired to app settings/metadata; baseline revision `f66869dce88e` generates the full schema; verified with `alembic upgrade head`. |
+| 3 | **M2: JWT revocation** | ✓ Done | `RevokedToken` model + jti claims on all tokens; `POST /auth/revoke`; `/auth/status` and portal auth check the blocklist. |
+| 4 | **M3: portal magic link** | ✓ Done | Production: token emailed via SendGrid (503 if unconfigured, token never returned in response). Dev/test keeps the direct-token shortcut. |
+| 5 | **M4: 2FA enforcement** | ✓ Done | When 2FA is enrolled+enabled, `/auth/token` and `/auth/pin-token` require a valid TOTP (backup codes accepted). |
+| 6 | **Monitoring + heartbeat** | ✓ Done | `GET /monitoring/status` (db/redis/provider health, uptime); daily 06:30 ET heartbeat email via Celery beat + `POST /monitoring/heartbeat` on demand. Set `HEARTBEAT_EMAIL` to enable. |
+| 7 | **Ops stations** | ✓ Done | Road Scan (PCI score → maintenance calendar → 10-yr decay chart) and Legal Advisor (dispute strength + strategy + license optimizer) — 23 stations total. |
+| 8 | **Money-path tests** | ✓ Done | Stripe webhook signature verification (valid sig marks txn paid), checkout edge cases, revocation, 2FA, magic-link modes. Suite now 142 tests. |
+| 9 | **Bug fix** | ✓ Done | Dormant `SyntaxError` in `email_service.py` (unescaped quote) — file failed to import at all. |
+
+**Remaining before customer traffic (require Gene, not code):** Railway/Netlify deploy with real keys (§GO_LIVE_CHECKLIST), attorney review of the 51-state legal data, L4 imagery ToS decision (Nearmap/EagleView).
+
+---
+
 ## Wave 8 — Advisor + Road-Scanning Stack — Completed 2026-07-05
 
 **Scope:** Deep-research port from WordenEnterpriseOS (`doooooone`): the 51-state legal advisor ("supreme court logic"), the civil-tech road-scanning stack, and full interior/exterior remodeling pricing.
