@@ -786,3 +786,14 @@ class GroundScanReport(Base):
     recommendation = Column(Text, nullable=True)
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
+
+
+class RevokedToken(Base):
+    """JWT revocation blocklist — admin and portal tokens (Wave 9, closes M2)."""
+    __tablename__ = 'revoked_tokens'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    jti = Column(String(64), nullable=False, unique=True, index=True)
+    token_type = Column(String(20), default='admin')   # admin | portal
+    expires_at = Column(DateTime(timezone=True), nullable=True)  # prune rows after this
+    revoked_at = Column(DateTime(timezone=True), default=utcnow)

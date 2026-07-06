@@ -79,7 +79,7 @@ def send_job_update(to_email: str, name: str, status: str, address: str) -> bool
     status_msg = {
         'in_progress': 'Work has started at your site.',
         'complete': 'Your project is complete. Thank you for choosing J. Worden & Sons!',
-        'paused': 'Work has been paused due to weather or scheduling. We'll resume shortly.',
+        'paused': "Work has been paused due to weather or scheduling. We'll resume shortly.",
     }.get(status, f'Your job status has been updated to: {status}.')
     html = f"""
 <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px">

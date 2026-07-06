@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     # Notifications
     sendgrid_api_key: str = ''
     sendgrid_from_email: str = 'no-reply@jwordenasphaltpaving.com'
+    portal_base_url: str = 'https://www.jwordenasphaltpaving.com/portal'
+    heartbeat_email: str = ''  # daily system-alive summary recipient; empty = disabled
     twilio_account_sid: str = ''
     twilio_auth_token: str = ''
     twilio_from_number: str = ''

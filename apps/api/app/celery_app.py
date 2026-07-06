@@ -17,6 +17,7 @@ celery_app = Celery(
         'app.tasks.cache_warmer',
         'app.tasks.vector_tasks',
         'app.tasks.scan_tasks',
+        'app.tasks.heartbeat',
     ],
 )
 
@@ -57,5 +58,11 @@ celery_app.conf.beat_schedule = {
         'task': 'app.tasks.vector_tasks.reindex_all_task',
         'schedule': crontab(hour=2, minute=0, day_of_week='sunday'),
         'options': {'queue': 'ai'},
+    },
+    # Daily heartbeat — 06:30 ET, proves the system is alive (anti-silent-stall)
+    'daily-heartbeat': {
+        'task': 'app.tasks.heartbeat.daily_heartbeat_task',
+        'schedule': crontab(hour=6, minute=30),
+        'options': {'queue': 'housekeeping'},
     },
 }

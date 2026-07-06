@@ -34,6 +34,8 @@ from .routers import (
     # Wave 8 — advisor + road-scanning stack
     advisor,
     pavement,
+    # Wave 9 — production hardening
+    monitoring,
 )
 
 
@@ -92,6 +94,7 @@ app.include_router(voice.router, prefix='/api/v1')
 app.include_router(lien_calendar.router, prefix='/api/v1')
 app.include_router(advisor.router, prefix='/api/v1')
 app.include_router(pavement.router, prefix='/api/v1')
+app.include_router(monitoring.router, prefix='/api/v1')
 app.include_router(customers.router, prefix='/api/v1')
 app.include_router(crm.router, prefix='/api/v1')
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -13,6 +14,8 @@ from ..config import settings
 from ..core.limiter import limiter
 from ..database import get_db
 from ..models import Customer, Lead, ProposalOutcome, WorkOrder, PaymentTransaction
+from ..routers.auth import is_token_revoked
+from ..services.email_service import send_email
 
 router = APIRouter(prefix='/portal', tags=['client-portal'])
 
@@ -36,6 +39,7 @@ def _issue_portal_jwt(customer_id: int, email: str) -> str:
         'sub': str(customer_id),
         'email': email,
         'type': 'portal',
+        'jti': uuid.uuid4().hex,
         'iat': int(now.timestamp()),
         'exp': int((now + timedelta(hours=_PORTAL_TOKEN_HOURS)).timestamp()),
     }
@@ -43,7 +47,7 @@ def _issue_portal_jwt(customer_id: int, email: str) -> str:
 
 
 def _get_portal_customer(request: Request, db: Session) -> Customer:
-    """Dependency: validate portal JWT, return Customer row."""
+    """Dependency: validate portal JWT (and revocation blocklist), return Customer row."""
     auth = request.headers.get('Authorization', '')
     if not auth.startswith('Bearer '):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Portal token required')
@@ -55,27 +59,59 @@ def _get_portal_customer(request: Request, db: Session) -> Customer:
         customer_id = int(payload['sub'])
     except (JWTError, KeyError, ValueError):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid or expired portal token')
+    if is_token_revoked(db, payload.get('jti')):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Portal token has been revoked')
     customer = db.query(Customer).filter(Customer.id == customer_id).first()
     if not customer:
         raise HTTPException(404, 'Customer not found')
     return customer
 
 
+def _send_magic_link(customer: Customer, token: str) -> bool:
+    """Email the portal magic link (M3). Returns False when email is not configured/fails."""
+    link = f'{settings.portal_base_url}?token={token}'
+    html = f"""
+<div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px">
+  <h2 style="color:#1a1a2e">Your J. Worden &amp; Sons Portal Link</h2>
+  <p>Hi {customer.name or 'there'}, click below to view your proposals, job status, and payments.</p>
+  <p style="margin:24px 0"><a href="{link}"
+     style="background:#f5a623;color:#1a1a2e;padding:12px 24px;border-radius:6px;
+            text-decoration:none;font-weight:bold">Open My Portal</a></p>
+  <p style="color:#666;font-size:13px">This link is valid for 7 days. If you didn't request it, you can ignore this email.</p>
+</div>"""
+    return send_email(
+        to_email=customer.email or '',
+        subject='Your J. Worden & Sons client portal link',
+        html_content=html,
+    )
+
+
 @router.post('/auth')
 @limiter.limit('5/minute')
 async def portal_auth(request: Request, body: PortalAuthRequest, db: Session = Depends(get_db)):
     """
-    Customer enters their email → get a portal JWT if they're in the CRM.
-    In production, also send magic link via email. Here we return the token directly.
+    Customer enters their email → magic link is emailed if they're in the CRM (M3).
+    Production never returns the token in the response; non-production keeps the
+    dev shortcut so local testing works without SendGrid.
     """
+    generic = {'message': 'If that email is in our system, a portal link has been sent.'}
     customer = db.query(Customer).filter(
         Customer.email == body.email.lower().strip()
     ).first()
     if not customer:
-        # Don't reveal whether email exists
-        return {'message': 'If that email is in our system, a portal link has been sent.'}
+        return generic  # don't reveal whether the email exists
     token = _issue_portal_jwt(customer.id, customer.email or '')
-    # In production: send email with token link instead of returning directly
+
+    if settings.environment == 'production':
+        if not settings.sendgrid_api_key:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail='Portal email delivery is not configured',
+            )
+        _send_magic_link(customer, token)
+        return generic
+
+    # Dev/test shortcut: return the token directly
     return {
         'access_token': token,
         'customer_id': customer.id,
