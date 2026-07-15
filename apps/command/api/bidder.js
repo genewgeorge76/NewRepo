@@ -1,4 +1,4 @@
-const Anthropic = require('@anthropic-ai/sdk');
+import Anthropic from '@anthropic-ai/sdk';
 
 // The Worden Paving Constants
 const ASPHALT_DENSITY = 115; // lbs per square yard per inch
