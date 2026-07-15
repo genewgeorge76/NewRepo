@@ -1,21 +1,29 @@
 {
-  "name": "worden-sovereign-os",
-  "version": "1.0.0",
+  "name": "jworden-platform",
   "private": true,
-  "description": "Worden Sovereign OS — the unified 51-state, multi-tenant, AI-native contractor operating system. Every ability, every repo, one system.",
   "workspaces": [
     "apps/web",
     "apps/ops",
-    "apps/command",
     "packages/core",
     "packages/ai",
     "packages/ui"
   ],
   "scripts": {
-    "dev:web": "npm run dev --workspace apps/web",
-    "dev:ops": "npm run dev --workspace apps/ops",
-    "dev:command": "npm run dev --workspace apps/command",
-    "build:web": "npm run build --workspace apps/web",
-    "api": "cd apps/api && uvicorn app.main:app --reload"
+    "dev:web": "npm run dev --workspace=apps/web",
+    "dev:ops": "npm run dev --workspace=apps/ops",
+    "build": "npm run build --workspaces --if-present",
+    "build:web": "npm run build --workspace=apps/web",
+    "build:ops": "npm run build --workspace=apps/ops",
+    "type-check": "npm run type-check --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm test --workspaces --if-present",
+    "dev:command": "npm --prefix apps/command run dev"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
   }
 }
