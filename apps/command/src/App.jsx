@@ -216,11 +216,10 @@ function JarvisStation(){
     const userMsg=input.trim();setInput('');
     setMsgs(p=>[...p,{role:'user',content:userMsg}]);setLoading(true);
     try{
-      const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,system:JARVIS_SYSTEM,
-          messages:[...msgs.map(m=>({role:m.role,content:m.content})),{role:'user',content:userMsg}]})});
+      const resp=await fetch('/api/jarvis',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({message:userMsg,history:msgs.map(m=>({role:m.role,content:m.content}))})});
       const data=await resp.json();
-      const text=data.content?.map(b=>b.text||'').join('\n')||'Systems temporarily offline, Sir.';
+      const text=data.response||'Systems temporarily offline, Sir.';
       setMsgs(p=>[...p,{role:'assistant',content:text}]);
     }catch(e){setMsgs(p=>[...p,{role:'assistant',content:`Connection issue: ${e.message}. Running in local-logic mode.`}]);}
     setLoading(false);
