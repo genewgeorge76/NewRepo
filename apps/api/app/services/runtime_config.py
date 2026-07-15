@@ -3,14 +3,14 @@ runtime_config.py — Hot-reloadable secret/config store, owner-only.
 
 Lets the Command Center owner paste API keys into a UI instead of editing
 Railway env vars and redeploying. Values are persisted to a JSON file at
-RUNTIME_CONFIG_PATH and shadow the corresponding os.environ values when
-read via `get(name)`.
+RUNTIME_CONFIG_PATH (default /tmp/jworden_runtime_config.json) and shadow
+the corresponding os.environ values when read via `get(name)`.
 
 Usage from any service:
     from app.services import runtime_config
-    api_key = runtime_config.get("ANTHROPIC_API_KEY")
+    api_key = runtime_config.get("ANTHROPIC_API_KEY")    # checks runtime store, falls back to os.environ
 
-Design:
+Design constraints:
   - File is created with mode 0600 where the OS supports it.
   - Empty/whitespace values delete the key (treated as "unset").
   - get() never raises; returns "" when missing.
@@ -57,21 +57,19 @@ _STATE_PATH = _default_state_path()
 _LOCK = threading.Lock()
 _CACHE: dict[str, str] | None = None
 
-# Whitelist of keys the admin UI is allowed to manage.
-# Anything outside this list is rejected — prevents an attacker from
+# Whitelist of keys the admin UI is allowed to manage. Anything outside this list
+# is rejected — prevents an attacker who somehow reaches the admin endpoint from
 # rewriting unrelated env vars (DATABASE_URL, JWT_SECRET_KEY, etc.).
 MANAGED_KEYS: tuple[str, ...] = (
-    # Jarvis brain (multi-provider LLM router)
+    # Jarvis brain
     "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
     "OPENAI_API_KEY",
     "GOOGLE_API_KEY", "GEMINI_API_KEY",
-    "PERPLEXITY_API_KEY",
-    "XAI_API_KEY",
     "LLM_FALLBACK_SILENT", "JARVIS_MAX_TIER",
     "JARVIS_MODEL_OVERRIDE", "JARVIS_DISABLE_GEMINI", "LLM_DISABLED_PROVIDERS",
     # Web search
     "TAVILY_API_KEY", "TAVILY_MAX_RESULTS",
-    # Voice / phone (Vapi outbound)
+    # Voice / phone
     "VAPI_API_KEY", "VAPI_PHONE_NUMBER_ID", "VAPI_ASSISTANT_ID",
     # SMS verification
     "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_VERIFY_SERVICE_SID",
@@ -81,13 +79,13 @@ MANAGED_KEYS: tuple[str, ...] = (
     "ADMIN_NOTIFY_EMAIL",
     # Company info (safe to manage from UI)
     "COMPANY_PHONE", "COMPANY_EMAIL", "COMPANY_WEBSITE", "COMPANY_ADDRESS",
-    # Google integrations
+    # Google integrations (large JSON blobs allowed)
     "GA4_PROPERTY_ID", "GA4_SERVICE_ACCOUNT_JSON",
     "GSC_SITE_URL", "GSC_SERVICE_ACCOUNT_JSON",
     "GOOGLE_ADS_DEVELOPER_TOKEN", "GOOGLE_ADS_SITE_DOMAIN",
     "GOOGLE_ADS_REFRESH_TOKEN", "GOOGLE_ADS_CUSTOMER_ID", "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
     "GOOGLE_MAPS_API_KEY", "GOOGLE_PAGESPEED_API_KEY",
-    # Search intelligence (SerpAPI for SERP heatmap)
+    # Live search intelligence (Google Trends / SerpAPI for hotspot heatmap)
     "SERPAPI_KEY", "GOOGLE_TRENDS_GEO", "SEARCH_PULSE_TERMS",
     # Licensing / tier (controls which premium features are exposed)
     "LICENSE_TIER",
@@ -98,14 +96,10 @@ MANAGED_KEYS: tuple[str, ...] = (
     "WEARABLE_HR_SPIKE_BPM", "WEARABLE_HR_SUSTAINED_BPM",
     "WEARABLE_SPO2_LOW", "WEARABLE_SPO2_CRITICAL",
     "WEARABLE_SKIN_TEMP_HIGH_F", "WEARABLE_HRV_LOW_MS",
-    # Estimate approval gate
-    "ESTIMATE_REQUIRES_APPROVAL", "ESTIMATE_APPROVAL_PIN",
-    # Field intelligence
-    "DRONE_STORAGE_PATH", "ROLLER_STATE_PATH",
 )
 
-# Tier-gated feature catalogue. Used by frontend + admin UI to decide
-# which premium surfaces to render. Lite licensees never see premium-tier features.
+# Tier-gated feature catalogue. Used by the frontend + admin UI to decide which
+# premium surfaces to render. Lite licensees never see premium-tier features.
 FEATURE_TIERS: dict[str, str] = {
     # core (always on)
     "lead_capture":         "core",
@@ -130,24 +124,17 @@ FEATURE_TIERS: dict[str, str] = {
     "lidar_ingest":         "premium",
     "roller_compaction":    "premium",
     "staff_portal":         "core",
-    "cognitive_digital_twin": "premium",
-    "math_ai":              "premium",
-    "supreme_court_ai":     "premium",
-    "anomaly_detection":    "premium",
-    "document_intelligence": "premium",
-    "estimate_approval":    "premium",
-    # owner-only (master deployment — never licensed out)
+    # owner-only (master deployment never licensed out)
     "integrations_panel":   "owner",
     "autonomy_kill_switch": "owner",
     "key_management":       "owner",
-    "self_heal_daemon":     "owner",
 }
 
 _TIER_RANK = {"owner": 3, "premium": 2, "core": 1}
 
 
 def current_tier() -> str:
-    """Returns 'owner' (default) | 'premium' | 'core' (lite)."""
+    """Returns 'owner' (default) | 'premium' | 'lite' (== core only)."""
     raw = (get("LICENSE_TIER") or "owner").strip().lower()
     if raw in {"lite", "basic", "core"}:
         return "core"
@@ -164,22 +151,21 @@ def feature_enabled(name: str) -> bool:
 def enabled_features() -> dict[str, bool]:
     return {k: feature_enabled(k) for k in FEATURE_TIERS}
 
-
+# Keys that should NEVER be returned as plaintext on read — only last 4 chars.
 SENSITIVE_KEYS: frozenset[str] = frozenset({
     "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "TAVILY_API_KEY",
     "GOOGLE_API_KEY", "GEMINI_API_KEY",
-    "PERPLEXITY_API_KEY", "XAI_API_KEY",
     "VAPI_API_KEY", "TWILIO_AUTH_TOKEN",
     "SENDGRID_API_KEY", "GOOGLE_ADS_DEVELOPER_TOKEN", "SERPAPI_KEY",
     "GA4_SERVICE_ACCOUNT_JSON", "GSC_SERVICE_ACCOUNT_JSON",
     "GOOGLE_ADS_REFRESH_TOKEN", "GOOGLE_MAPS_API_KEY", "GOOGLE_PAGESPEED_API_KEY",
     "WEARABLE_APPLE_HEALTH_SECRET", "WEARABLE_FITBIT_SECRET",
     "WEARABLE_GARMIN_SECRET", "WEARABLE_WHOOP_SECRET", "WEARABLE_OURA_SECRET",
-    "ESTIMATE_APPROVAL_PIN",
 })
 
 
 def _load() -> dict[str, str]:
+    """Load + cache the JSON state file. Lock must be held by caller."""
     global _CACHE
     if _CACHE is not None:
         return _CACHE
@@ -191,6 +177,7 @@ def _load() -> dict[str, str]:
         data = json.loads(raw or "{}")
         if not isinstance(data, dict):
             raise ValueError("runtime config root must be an object")
+        # Keep only string values + whitelisted keys
         _CACHE = {k: str(v) for k, v in data.items() if k in MANAGED_KEYS and v not in (None, "")}
     except Exception as exc:
         logger.exception("runtime_config load failed; starting empty: %s", exc)
@@ -199,6 +186,7 @@ def _load() -> dict[str, str]:
 
 
 def _save(data: dict[str, str]) -> None:
+    """Atomic write. Lock must be held by caller."""
     _STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(prefix=".runtime_config_", dir=str(_STATE_PATH.parent))
     try:
@@ -227,8 +215,10 @@ def get(name: str, default: str = "") -> str:
 
 
 def set_value(name: str, value: str) -> bool:
-    """Set or delete a single managed key. Empty/whitespace value deletes.
-    Returns True on success, False if the key is not in MANAGED_KEYS."""
+    """
+    Set or delete a single managed key. Empty/whitespace value deletes.
+    Returns True on success, False if the key is not in MANAGED_KEYS.
+    """
     if name not in MANAGED_KEYS:
         return False
     value = (value or "").strip()
@@ -271,8 +261,8 @@ def _mask(value: str) -> str:
 
 def status_for(keys: Iterable[str] | None = None) -> dict[str, dict]:
     """
-    Return {key: {set, source, preview}} dict suitable for an admin UI.
-    Sensitive keys are always masked.
+    Return a dict of {key: {set: bool, source: 'runtime'|'env'|'none', preview: str}}
+    Sensitive keys are always masked. Suitable for an admin UI.
     """
     target = tuple(keys) if keys else MANAGED_KEYS
     out: dict[str, dict] = {}
@@ -285,10 +275,10 @@ def status_for(keys: Iterable[str] | None = None) -> dict[str, dict]:
             source = "runtime" if in_runtime else ("env" if in_env else "none")
             preview = _mask(value) if (k in SENSITIVE_KEYS or len(value) > 64) else value
             out[k] = {
-                "set":       bool(value),
-                "source":    source,
-                "preview":   preview,
-                "managed":   True,
+                "set":     bool(value),
+                "source":  source,
+                "preview": preview,
+                "managed": True,
                 "sensitive": k in SENSITIVE_KEYS,
             }
     return out

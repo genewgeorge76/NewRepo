@@ -1,799 +1,1617 @@
+"""
+SQLAlchemy ORM models for J. Worden & Sons — full platform persistence layer.
+
+Schema managed by Alembic migrations; optional AUTO_CREATE_TABLES bootstrap for local dev.
+All timestamps are stored in UTC.
+
+Geospatial notes:
+  ProjectSite and PermitLead store coordinates as Float columns for SQLite
+  compatibility in development.  In production with PostgreSQL + PostGIS,
+  run the migration in db/migrations/001_add_postgis_geometry.sql to add
+  native GEOMETRY columns and spatial indexes.
+"""
+
 from datetime import datetime, timezone
 
-from sqlalchemy import (
-    Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text,
-    UniqueConstraint,
-)
-from sqlalchemy.orm import relationship
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text, UniqueConstraint
 
 from .database import Base
 
 
-def utcnow() -> datetime:
+def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
 class Lead(Base):
-    __tablename__ = 'leads'
-
-    id = Column(String(64), primary_key=True)
-    name = Column(String(200), nullable=False)
-    email = Column(String(200), nullable=True)
-    phone = Column(String(30), nullable=True)
-    address = Column(String(300), nullable=True)
-    city = Column(String(100), nullable=True)
-    state = Column(String(50), nullable=True)
-    service = Column(String(100), nullable=True)
-    service_type = Column(String(100), nullable=True)
-    urgency = Column(String(30), nullable=True)
-    description = Column(Text, nullable=True)
-    estimated_value = Column(Float, nullable=True)
-    tier = Column(String(10), nullable=True)
-    score = Column(Integer, nullable=True)
-    score_label = Column(String(10), nullable=True)
-    status = Column(String(30), default='new')
-    pipeline_stage = Column(String(30), default='new')
-    source = Column(String(50), nullable=True)
-    tenant_id = Column(String(64), default='default', nullable=True, index=True)
-    contacted_at = Column(DateTime(timezone=True), nullable=True)
-    proposal_sent_at = Column(DateTime(timezone=True), nullable=True)
-    closed_at = Column(DateTime(timezone=True), nullable=True)
-    closed_reason = Column(String(300), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-    jobs = relationship('Job', back_populates='lead')
-    payment_transactions = relationship('PaymentTransaction', back_populates='lead')
-
-
-class Job(Base):
-    __tablename__ = 'jobs'
-
-    id = Column(String(64), primary_key=True)
-    trade = Column(String(100), nullable=False)
-    city = Column(String(100), nullable=True)
-    quantity = Column(Float, nullable=False)
-    bid = Column(Float, nullable=False)
-    status = Column(String(30), default='Estimated')
-    is_large_job = Column(Boolean, default=False)
-    lead_id = Column(String(64), ForeignKey('leads.id'), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-    lead = relationship('Lead', back_populates='jobs')
-
-
-class Crew(Base):
-    __tablename__ = 'crew'
-
-    id = Column(String(64), primary_key=True)
-    name = Column(String(200), nullable=False)
-    role = Column(String(100), nullable=False)
-    status = Column(String(30), default='Available')
-    phone = Column(String(30), nullable=True)
-    license_expiry = Column(String(20), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class Equipment(Base):
-    __tablename__ = 'equipment'
-
-    id = Column(String(64), primary_key=True)
-    name = Column(String(200), nullable=False)
-    type = Column(String(100), nullable=False)
-    status = Column(String(30), default='Available')
-    serial_number = Column(String(100), nullable=True)
-    next_service = Column(String(20), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class Estimate(Base):
-    __tablename__ = 'estimates'
-
-    id = Column(String(64), primary_key=True)
-    trade_key = Column(String(50), nullable=False)
-    trade_label = Column(String(100), nullable=False)
-    quantity = Column(Float, nullable=False)
-    tonnage = Column(Float, nullable=True)
-    material_cost = Column(Float, nullable=False)
-    binder_cost = Column(Float, nullable=False)
-    final_bid = Column(Float, nullable=False)
-    margin = Column(Float, nullable=False)
-    location = Column(String(100), nullable=True)
-    is_large_job = Column(Boolean, default=False)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class BlogPost(Base):
-    __tablename__ = 'blog_posts'
-    __table_args__ = (UniqueConstraint('slug', name='uq_blog_posts_slug'),)
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    slug = Column(String(200), nullable=False, index=True)
-    title = Column(String(300), nullable=False)
-    excerpt = Column(Text, nullable=True)
-    body = Column(Text, nullable=True)
-    meta_description = Column(String(320), nullable=True)
-    author = Column(String(120), default='J. Worden & Sons')
-    status = Column(String(20), default='draft')
-    read_time_minutes = Column(Integer, nullable=True)
-    tags = Column(String(500), nullable=True)
-    published_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-
-class PaymentTransaction(Base):
-    __tablename__ = 'payment_transactions'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    lead_id = Column(String(64), ForeignKey('leads.id'), nullable=False, index=True)
-    stripe_checkout_session_id = Column(String(200), nullable=True, index=True)
-    stripe_payment_intent_id = Column(String(200), nullable=True)
-    amount_cents = Column(Integer, nullable=True)
-    status = Column(String(30), default='pending')
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-    lead = relationship('Lead', back_populates='payment_transactions')
-
-
-class LienCalendarEntry(Base):
-    __tablename__ = 'lien_calendar_entries'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    customer_name = Column(String(120), nullable=False)
-    project_address = Column(String(300), nullable=False)
-    state_code = Column(String(2), nullable=False, index=True)
-    project_start_date = Column(DateTime(timezone=True), nullable=True)
-    last_furnishing_date = Column(DateTime(timezone=True), nullable=True)
-    preliminary_notice_deadline = Column(DateTime(timezone=True), nullable=True)
-    lien_filing_deadline = Column(DateTime(timezone=True), nullable=True, index=True)
-    foreclosure_deadline = Column(DateTime(timezone=True), nullable=True)
-    notes = Column(Text, nullable=True)
-    reminder_sent_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class Customer(Base):
-    __tablename__ = 'customers'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(120), nullable=False)
-    email = Column(String(254), nullable=True, index=True)
-    phone = Column(String(30), nullable=True)
-    company = Column(String(200), nullable=True)
-    city = Column(String(100), nullable=True)
-    state_code = Column(String(2), nullable=True)
-    customer_type = Column(String(30), default='residential')
-    is_franchise = Column(Boolean, default=False)
-    brand = Column(String(100), nullable=True)
-    total_jobs = Column(Integer, default=0)
-    total_revenue = Column(Float, default=0.0)
-    last_job_date = Column(DateTime(timezone=True), nullable=True)
-    source = Column(String(60), nullable=True)
-    notes = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-    history = relationship('ServiceHistory', back_populates='customer')
-
-
-class ServiceHistory(Base):
-    __tablename__ = 'service_history'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    customer_id = Column(Integer, ForeignKey('customers.id'), nullable=False, index=True)
-    job_date = Column(DateTime(timezone=True), nullable=True)
-    service_type = Column(String(60), nullable=True)
-    address = Column(String(300), nullable=True)
-    state_code = Column(String(2), nullable=True)
-    revenue = Column(Float, nullable=True)
-    notes = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-    customer = relationship('Customer', back_populates='history')
-
-
-# ── Wave 2 Models ─────────────────────────────────────────────────────────────
-
-class WorkOrder(Base):
-    __tablename__ = 'work_orders'
-
-    id = Column(String(64), primary_key=True)
-    job_id = Column(String(64), ForeignKey('jobs.id'), nullable=True, index=True)
-    lead_id = Column(String(64), ForeignKey('leads.id'), nullable=True)
-    title = Column(String(200), nullable=False)
-    description = Column(Text, nullable=True)
-    status = Column(String(30), default='pending')  # pending, assigned, in_progress, complete
-    crew_assigned = Column(String(300), nullable=True)    # comma-separated crew ids
-    equipment_assigned = Column(String(300), nullable=True)
-    scheduled_date = Column(DateTime(timezone=True), nullable=True)
-    started_at = Column(DateTime(timezone=True), nullable=True)
-    completed_at = Column(DateTime(timezone=True), nullable=True)
-    site_address = Column(String(300), nullable=True)
-    notes = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-
-class WorkforceMember(Base):
-    __tablename__ = 'workforce_members'
-
-    id = Column(String(64), primary_key=True)
-    name = Column(String(200), nullable=False)
-    role = Column(String(100), nullable=False)
-    email = Column(String(200), nullable=True)
-    phone = Column(String(30), nullable=True)
-    status = Column(String(30), default='active')  # active, inactive, terminated
-    skills = Column(Text, nullable=True)            # JSON array of skill strings
-    certifications = Column(Text, nullable=True)    # JSON array of cert objects {name, expiry}
-    license_number = Column(String(100), nullable=True)
-    license_expiry = Column(DateTime(timezone=True), nullable=True)
-    osha_card_expiry = Column(DateTime(timezone=True), nullable=True)
-    hire_date = Column(DateTime(timezone=True), nullable=True)
-    hourly_rate = Column(Float, nullable=True)
-    notes = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-
-class SubcontractorRoster(Base):
-    __tablename__ = 'subcontractor_roster'
-
-    id = Column(String(64), primary_key=True)
-    company_name = Column(String(200), nullable=False)
-    contact_name = Column(String(200), nullable=True)
-    email = Column(String(200), nullable=True)
-    phone = Column(String(30), nullable=True)
-    trade_specialty = Column(String(200), nullable=True)
-    states_licensed = Column(String(300), nullable=True)  # comma-separated state codes
-    license_number = Column(String(100), nullable=True)
-    license_expiry = Column(DateTime(timezone=True), nullable=True)
-    insurance_expiry = Column(DateTime(timezone=True), nullable=True)
-    insurance_limit = Column(Float, nullable=True)
-    bonded = Column(Boolean, default=False)
-    status = Column(String(30), default='active')  # active, inactive, preferred, blacklisted
-    rating = Column(Float, nullable=True)          # 1.0–5.0
-    notes = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-    performance_reviews = relationship('SubcontractorPerformance', back_populates='sub')
-
-
-class SubcontractorPerformance(Base):
-    __tablename__ = 'subcontractor_performance'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    sub_id = Column(String(64), ForeignKey('subcontractor_roster.id'), nullable=False, index=True)
-    job_id = Column(String(64), nullable=True)
-    job_date = Column(DateTime(timezone=True), nullable=True)
-    quality_score = Column(Integer, nullable=True)     # 1–5
-    schedule_score = Column(Integer, nullable=True)    # 1–5
-    communication_score = Column(Integer, nullable=True)
-    would_rehire = Column(Boolean, nullable=True)
-    notes = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-    sub = relationship('SubcontractorRoster', back_populates='performance_reviews')
-
-
-class SafetyToolboxTalk(Base):
-    __tablename__ = 'safety_toolbox_talks'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    title = Column(String(200), nullable=False)
-    topic = Column(String(100), nullable=False)  # fall_protection, struck_by, caught_between, electrical, heat, etc.
-    content = Column(Text, nullable=False)
-    duration_minutes = Column(Integer, default=10)
-    presenter = Column(String(200), nullable=True)
-    attendees = Column(Text, nullable=True)  # JSON array of names
-    site_address = Column(String(300), nullable=True)
-    presented_at = Column(DateTime(timezone=True), nullable=True)
-    ai_generated = Column(Boolean, default=False)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class SafetyIncident(Base):
-    __tablename__ = 'safety_incidents'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    incident_date = Column(DateTime(timezone=True), nullable=False)
-    incident_type = Column(String(50), nullable=False)  # recordable, near_miss, first_aid, property_damage
-    description = Column(Text, nullable=False)
-    location = Column(String(300), nullable=True)
-    injured_person = Column(String(200), nullable=True)
-    body_part_affected = Column(String(100), nullable=True)
-    days_away = Column(Integer, default=0)
-    days_restricted = Column(Integer, default=0)
-    root_cause = Column(Text, nullable=True)
-    corrective_action = Column(Text, nullable=True)
-    osha_recordable = Column(Boolean, default=False)
-    reported_to_osha = Column(Boolean, default=False)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-
-class CashFlowEntry(Base):
-    __tablename__ = 'cashflow_entries'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    week_start = Column(DateTime(timezone=True), nullable=False, index=True)
-    category = Column(String(60), nullable=False)   # revenue, materials, labor, equipment, overhead, other
-    label = Column(String(200), nullable=False)
-    amount = Column(Float, nullable=False)          # positive = inflow, negative = outflow
-    is_actual = Column(Boolean, default=False)      # True = actual, False = projected
-    notes = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class CashFlowAlert(Base):
-    __tablename__ = 'cashflow_alerts'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    threshold_amount = Column(Float, nullable=False)
-    alert_email = Column(String(254), nullable=True)
-    is_active = Column(Boolean, default=True)
-    triggered_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class VdotBid(Base):
-    __tablename__ = 'vdot_bids'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    project_number = Column(String(50), nullable=True, index=True)
-    project_name = Column(String(400), nullable=False)
-    district = Column(String(100), nullable=True)
-    county = Column(String(100), nullable=True)
-    state_route = Column(String(50), nullable=True)
-    bid_date = Column(DateTime(timezone=True), nullable=True, index=True)
-    estimated_cost = Column(Float, nullable=True)
-    project_type = Column(String(100), nullable=True)  # paving, grading, bridge, etc.
-    tier = Column(String(10), nullable=True)            # WHALE, SHARK, FISH
-    url = Column(String(500), nullable=True)
-    status = Column(String(30), default='open')         # open, bid, awarded, cancelled
-    scraped_at = Column(DateTime(timezone=True), default=utcnow)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class GalleryImage(Base):
-    __tablename__ = 'gallery_images'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    filename = Column(String(300), nullable=False)
-    original_filename = Column(String(300), nullable=True)
-    storage_path = Column(String(500), nullable=False)   # local path or S3 key
-    storage_type = Column(String(10), default='local')   # local, s3
-    url = Column(String(500), nullable=True)
-    caption = Column(String(400), nullable=True)
-    project_type = Column(String(100), nullable=True)
-    city = Column(String(100), nullable=True)
-    state_code = Column(String(2), nullable=True)
-    is_before = Column(Boolean, nullable=True)           # True=before, False=after, None=standalone
-    is_featured = Column(Boolean, default=False)
-    is_public = Column(Boolean, default=True)
-    sort_order = Column(Integer, default=0)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class ChatSession(Base):
-    __tablename__ = 'chat_sessions'
-
-    id = Column(String(64), primary_key=True)
-    context = Column(String(200), nullable=True)   # 'jarvis', 'public', etc.
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    last_active_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-    messages = relationship('ChatMessage', back_populates='session', order_by='ChatMessage.id')
-
-
-class ChatMessage(Base):
-    __tablename__ = 'chat_messages'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    session_id = Column(String(64), ForeignKey('chat_sessions.id'), nullable=False, index=True)
-    role = Column(String(20), nullable=False)    # user, assistant
-    content = Column(Text, nullable=False)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-    session = relationship('ChatSession', back_populates='messages')
-
-
-class ProposalOutcome(Base):
-    __tablename__ = 'proposal_outcomes'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    lead_id = Column(String(64), ForeignKey('leads.id'), nullable=True, index=True)
-    proposal_title = Column(String(300), nullable=False)
-    proposal_body = Column(Text, nullable=True)
-    estimated_value = Column(Float, nullable=True)
-    outcome = Column(String(20), nullable=True)   # won, lost, pending, expired
-    lost_reason = Column(String(300), nullable=True)
-    competitor_won = Column(String(200), nullable=True)
-    generated_at = Column(DateTime(timezone=True), default=utcnow)
-    decided_at = Column(DateTime(timezone=True), nullable=True)
-
-
-# ── Wave 6 Models — Anomaly Detection ────────────────────────────────────────
-
-class AnomalyAlert(Base):
-    __tablename__ = 'anomaly_alerts'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    metric_name = Column(String(100), nullable=False, index=True)
-    current_value = Column(Float, nullable=False)
-    baseline_value = Column(Float, nullable=False)
-    z_score = Column(Float, nullable=False)
-    severity = Column(String(20), nullable=False)   # CRITICAL, HIGH, MEDIUM, INFO
-    message = Column(Text, nullable=False)
-    tenant_id = Column(String(64), default='default', nullable=True, index=True)
-    detected_at = Column(DateTime(timezone=True), default=utcnow)
-    resolved_at = Column(DateTime(timezone=True), nullable=True)
-
-
-# ── Wave 3 Models ─────────────────────────────────────────────────────────────
-
-class TwoFactorSecret(Base):
-    __tablename__ = 'two_factor_secrets'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    username = Column(String(100), nullable=False, unique=True, index=True)
-    secret = Column(String(64), nullable=False)       # base32 TOTP secret
-    backup_codes = Column(Text, nullable=True)         # JSON array of remaining codes
-    enabled = Column(Boolean, default=False)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-
-class AuditEvent(Base):
-    __tablename__ = 'audit_events'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    actor = Column(String(100), nullable=False)       # username or 'system'
-    action = Column(String(100), nullable=False)      # e.g. 'auth.login', 'lead.delete'
-    resource_type = Column(String(60), nullable=True)
-    resource_id = Column(String(64), nullable=True)
-    detail = Column(Text, nullable=True)              # JSON extra data
-    ip_address = Column(String(45), nullable=True)    # supports IPv6
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class EmailLog(Base):
-    __tablename__ = 'email_logs'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    to_email = Column(String(254), nullable=False, index=True)
-    subject = Column(String(300), nullable=False)
-    status = Column(String(20), default='pending')    # pending, sent, failed
-    sent_at = Column(DateTime(timezone=True), nullable=True)
-    error = Column(String(300), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
+    """A quote request submitted via the multi-step quote form."""
+
+    __tablename__ = "leads"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    name            = Column(String(120), nullable=False)
+    email           = Column(String(254), nullable=False, index=True)
+    phone           = Column(String(30), nullable=False)
+    service_type    = Column(String(60), nullable=False)
+    property_type   = Column(String(30), nullable=False)
+    urgency         = Column(String(30), nullable=False)
+    project_size_sqft = Column(Float, nullable=True)
+    address         = Column(String(300), nullable=True)
+    state_code      = Column(String(2),   nullable=True, index=True)
+    message         = Column(Text, nullable=True)
+
+    # Lead scoring
+    score_value     = Column(Integer, nullable=True)
+    score_label     = Column(String(10), nullable=True)   # HOT | WARM | COOL
+    score_priority  = Column(Integer, nullable=True)
+
+    # Pipeline CRM stage tracking (Feature 3)
+    pipeline_stage    = Column(String(30), default='new', nullable=False)
+    contacted_at      = Column(DateTime(timezone=True), nullable=True)
+    proposal_sent_at  = Column(DateTime(timezone=True), nullable=True)
+    closed_at         = Column(DateTime(timezone=True), nullable=True)
+    closed_reason     = Column(String(100), nullable=True)
+
+    # Multi-tenant (Feature 15)
+    tenant_id       = Column(String(60), nullable=True, index=True, default='default')
+
+    created_at      = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<Lead id={self.id} name={self.name!r} label={self.score_label!r}>"
+
+
+class ContactMessage(Base):
+    """A general contact form submission."""
+
+    __tablename__ = "contact_messages"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    name       = Column(String(120), nullable=False)
+    email      = Column(String(254), nullable=False, index=True)
+    phone      = Column(String(30), nullable=True)
+    message    = Column(Text, nullable=False)
+    # Multi-tenant (Feature 15)
+    tenant_id       = Column(String(60), nullable=True, index=True, default='default')
+
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<ContactMessage id={self.id} name={self.name!r}>"
+
+
+class PageContent(Base):
+    """
+    CMS content blocks managed through the admin dashboard (webpage maker).
+
+    Each block has a unique ``key`` (e.g. "hero", "services_intro") and stores
+    a ``title``, a rich ``body`` (HTML or Markdown), and an optional JSON blob
+    in ``meta_json`` for extra structured data (colours, CTAs, etc.).
+    The frontend fetches blocks via the public /api/v1/content endpoints.
+    """
+
+    __tablename__ = "page_contents"
+    __table_args__ = (UniqueConstraint("key", name="uq_page_contents_key"),)
+
+    id         = Column(Integer, primary_key=True, index=True)
+    key        = Column(String(100), nullable=False, index=True)
+    title      = Column(String(200), nullable=False)
+    body       = Column(Text, nullable=False, default="")
+    meta_json  = Column(Text, nullable=True)   # optional JSON for extra fields
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<PageContent key={self.key!r} title={self.title!r}>"
+
+
+# ── Geospatial models ─────────────────────────────────────────────────────────
+
+class ProjectSite(Base):
+    """
+    A mapped construction/paving site within the JWordenAI service area.
+
+    Geometry is stored as GeoJSON text so the model works with both SQLite
+    (development) and PostgreSQL (production).  For PostGIS spatial queries,
+    run db/migrations/001_add_postgis_geometry.sql to add native geometry
+    columns and GIST indexes alongside these float columns.
+    """
+
+    __tablename__ = "project_sites"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    name             = Column(String(200), nullable=False)
+    address          = Column(String(300), nullable=True)
+    city             = Column(String(100), nullable=True)
+    state            = Column(String(2), nullable=True, default="VA")
+    status           = Column(String(30), nullable=False, default="active")   # active | completed | pending
+    service_type     = Column(String(60), nullable=True)
+    project_size_sqft = Column(Float, nullable=True)
+
+    # Centroid coordinates (WGS84)
+    lat              = Column(Float, nullable=True)
+    lng              = Column(Float, nullable=True)
+
+    # Service radius in miles (default: 20-mile Richmond grid)
+    service_radius_miles = Column(Float, nullable=True, default=20.0)
+
+    # Full polygon stored as GeoJSON FeatureCollection text
+    geometry_json    = Column(Text, nullable=True)
+
+    # Calculated area/perimeter from leaflet-draw polygon
+    area_sqft        = Column(Float, nullable=True)
+    perimeter_ft     = Column(Float, nullable=True)
+
+    notes            = Column(Text, nullable=True)
+    created_at       = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at       = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<ProjectSite id={self.id} name={self.name!r} status={self.status!r}>"
 
 
 class PermitLead(Base):
-    __tablename__ = 'permit_leads'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    source = Column(String(50), nullable=False)           # vpt, deq, local
-    permit_number = Column(String(100), nullable=True, index=True)
-    permit_type = Column(String(100), nullable=True)
-    permit_status = Column(String(50), nullable=True)
-    contractor_name = Column(String(200), nullable=True)
-    contractor_license = Column(String(100), nullable=True)
-    property_address = Column(String(300), nullable=True)
-    property_city = Column(String(100), nullable=True)
-    property_state = Column(String(2), nullable=True, index=True)
-    property_zip = Column(String(10), nullable=True)
-    project_value = Column(Float, nullable=True)
-    estimated_sqft = Column(Float, nullable=True)
-    permit_date = Column(DateTime(timezone=True), nullable=True)
-    expiry_date = Column(DateTime(timezone=True), nullable=True)
-    priority_score = Column(Integer, nullable=True)       # 1–100
-    priority_label = Column(String(10), nullable=True)    # HOT, WARM, COOL
-    raw_json = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class ClientPortalToken(Base):
-    __tablename__ = 'client_portal_tokens'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    customer_id = Column(Integer, ForeignKey('customers.id'), nullable=False, index=True)
-    token_hash = Column(String(128), nullable=False, index=True)   # SHA-256 of JWT jti
-    expires_at = Column(DateTime(timezone=True), nullable=False)
-    revoked = Column(Boolean, default=False)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-# ── Wave 4 Models — Property Scan → Direct Mail ───────────────────────────────
-
-class ScanCampaign(Base):
-    __tablename__ = 'scan_campaigns'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    zip_code = Column(String(10), nullable=False, index=True)
-    label = Column(String(200), nullable=False)
-    status = Column(String(30), default='pending')  # pending, queued, running, done, failed
-    max_properties = Column(Integer, default=50)
-    auto_mail = Column(Boolean, default=False)       # trigger Lob send after scan
-    total_properties = Column(Integer, default=0)
-    scanned = Column(Integer, default=0)
-    mailed = Column(Integer, default=0)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    completed_at = Column(DateTime(timezone=True), nullable=True)
-
-    properties = relationship('ScanProperty', back_populates='campaign')
-
-
-class ScanProperty(Base):
-    __tablename__ = 'scan_properties'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    campaign_id = Column(Integer, ForeignKey('scan_campaigns.id'), nullable=False, index=True)
-    parcel_id = Column(String(100), nullable=True)
-    address = Column(String(300), nullable=False)
-    city = Column(String(100), nullable=True)
-    state = Column(String(50), nullable=True)
-    zip_code = Column(String(10), nullable=True)
-    owner_name = Column(String(200), nullable=True)
-    owner_type = Column(String(30), nullable=True)    # individual, corporate, trust
-    land_use_code = Column(String(50), nullable=True)
-    lot_size_sqft = Column(Float, nullable=True)
-    year_built = Column(Integer, nullable=True)
-    latitude = Column(Float, nullable=True)
-    longitude = Column(Float, nullable=True)
-    status = Column(String(30), default='pending')    # pending, scanning, scanned, mailed, skipped
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-    campaign = relationship('ScanCampaign', back_populates='properties')
-    result = relationship('ScanResult', back_populates='property', uselist=False)
-
-
-class ScanResult(Base):
-    __tablename__ = 'scan_results'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    property_id = Column(Integer, ForeignKey('scan_properties.id'), nullable=False, unique=True, index=True)
-    roof_condition = Column(String(10), nullable=True)       # good | fair | poor
-    driveway_condition = Column(String(10), nullable=True)
-    drainage_condition = Column(String(10), nullable=True)
-    overall_score = Column(Integer, nullable=True)            # 0–100
-    condition_narrative = Column(Text, nullable=True)
-    services_recommended = Column(Text, nullable=True)        # JSON array
-    service_type = Column(String(100), nullable=True)         # top recommended service
-    estimated_sqft = Column(Float, nullable=True)
-    estimate_low = Column(Float, nullable=True)
-    estimate_high = Column(Float, nullable=True)
-    mailer_html = Column(Text, nullable=True)                 # full HTML for printing/Lob
-    lob_letter_id = Column(String(100), nullable=True)        # Lob ltr_... ID
-    lob_status = Column(String(50), nullable=True)            # queued, sent, failed, mock_queued
-    mailed_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-    property = relationship('ScanProperty', back_populates='result')
-
-
-# ── Jarvis OS — Catalog & 3D/4D Selection Models ─────────────────────────────
-
-class SelectableItem(Base):
-    """Tagged catalog object — every finish, paver, fixture, planting, or material
-    the customer can choose.  Each carries real price, real availability/lead time,
-    and install labour so swapping a finish updates total + timeline live."""
-    __tablename__ = 'selectable_items'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    sku = Column(String(60), nullable=False, unique=True, index=True)
-    category = Column(String(60), nullable=False, index=True)   # pavers | fixtures | finishes | plantings | materials
-    subcategory = Column(String(60), nullable=True)
-    name = Column(String(200), nullable=False)
-    description = Column(Text, nullable=True)
-    manufacturer = Column(String(200), nullable=True)
-    unit = Column(String(30), nullable=False, default='sqft')   # sqft | ea | lnft | ton
-    price_usd = Column(Float, nullable=False)                   # material cost per unit
-    install_labor_usd = Column(Float, nullable=False, default=0.0)  # labor per unit
-    lead_time_days = Column(Integer, nullable=False, default=0)  # 0 = in-stock
-    in_stock = Column(Boolean, default=True)
-    available_qty = Column(Float, nullable=True)                 # None = unlimited
-    seasonal_note = Column(String(300), nullable=True)           # "Best installed Mar-Oct"
-    tags = Column(Text, nullable=True)                           # JSON list: ["permeable","ADA","recycled"]
-    color = Column(String(60), nullable=True)
-    texture = Column(String(60), nullable=True)
-    dimensions = Column(String(100), nullable=True)              # "12x12x2 in"
-    weight_per_unit = Column(Float, nullable=True)               # lbs per unit
-    thumbnail_url = Column(String(500), nullable=True)
-    model_3d_url = Column(String(500), nullable=True)            # GLTF/GLB asset
-    datasheet_url = Column(String(500), nullable=True)
-    is_active = Column(Boolean, default=True)
-    tenant_id = Column(String(64), default='default', nullable=True, index=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-    selections = relationship('CatalogSelection', back_populates='item')
-
-
-class CatalogProject(Base):
-    """A customer's 3D/4D property model — the container for all their selections."""
-    __tablename__ = 'catalog_projects'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    lead_id = Column(String(64), ForeignKey('leads.id'), nullable=True, index=True)
-    customer_name = Column(String(200), nullable=False)
-    property_address = Column(String(300), nullable=True)
-    project_date = Column(DateTime(timezone=True), nullable=True)  # desired start
-    total_sqft = Column(Float, nullable=True)
-    budget_usd = Column(Float, nullable=True)
-    status = Column(String(30), default='design')   # design | approved | ordered | installed
-    notes = Column(Text, nullable=True)
-    tenant_id = Column(String(64), default='default', nullable=True, index=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-    selections = relationship('CatalogSelection', back_populates='project')
-
-
-class CatalogSelection(Base):
-    """One item chosen within a CatalogProject — drives live total + timeline."""
-    __tablename__ = 'catalog_selections'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    project_id = Column(Integer, ForeignKey('catalog_projects.id'), nullable=False, index=True)
-    item_id = Column(Integer, ForeignKey('selectable_items.id'), nullable=False, index=True)
-    quantity = Column(Float, nullable=False, default=1.0)
-    area_sqft = Column(Float, nullable=True)                     # for spatial items
-    zone_label = Column(String(100), nullable=True)              # "Front driveway", "Patio"
-    override_price_usd = Column(Float, nullable=True)            # owner override
-    approved = Column(Boolean, default=False)
-    approved_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-    project = relationship('CatalogProject', back_populates='selections')
-    item = relationship('SelectableItem', back_populates='selections')
-
-
-# ── Gantt / Critical-Path Models ──────────────────────────────────────────────
-
-class GanttTask(Base):
-    """Project schedule task for Gantt + critical-path planning."""
-    __tablename__ = 'gantt_tasks'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    job_id = Column(String(64), ForeignKey('jobs.id'), nullable=True, index=True)
-    project_name = Column(String(200), nullable=False)
-    task_name = Column(String(200), nullable=False)
-    phase = Column(String(60), nullable=True)              # mobilization | excavation | base | paving | striping | cleanup
-    assigned_to = Column(String(200), nullable=True)       # crew name / ID
-    equipment = Column(String(200), nullable=True)
-    planned_start = Column(DateTime(timezone=True), nullable=False)
-    planned_end = Column(DateTime(timezone=True), nullable=False)
-    actual_start = Column(DateTime(timezone=True), nullable=True)
-    actual_end = Column(DateTime(timezone=True), nullable=True)
-    duration_hours = Column(Float, nullable=True)
-    pct_complete = Column(Integer, default=0)              # 0–100
-    depends_on = Column(Text, nullable=True)               # JSON list of task IDs
-    is_critical = Column(Boolean, default=False)           # on critical path
-    weather_hold = Column(Boolean, default=False)
-    notes = Column(Text, nullable=True)
-    tenant_id = Column(String(64), default='default', nullable=True, index=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-
-# ── SaaS / Multi-Tenant Billing Models ───────────────────────────────────────
-
-class TenantRecord(Base):
-    """White-label SaaS licensee — one row per contractor org."""
-    __tablename__ = 'tenant_records'
-    __table_args__ = (UniqueConstraint('slug', name='uq_tenant_records_slug'),)
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), nullable=False, unique=True, index=True)  # e.g. 'blueridge-paving'
-    slug = Column(String(64), nullable=False, index=True)
-    business_name = Column(String(200), nullable=False)
-    contact_email = Column(String(254), nullable=False)
-    contact_phone = Column(String(30), nullable=True)
-    plan = Column(String(30), default='starter')          # starter | pro | enterprise
-    status = Column(String(30), default='trial')          # trial | active | past_due | cancelled
-    stripe_customer_id = Column(String(100), nullable=True, index=True)
-    stripe_subscription_id = Column(String(100), nullable=True, index=True)
-    trial_ends_at = Column(DateTime(timezone=True), nullable=True)
-    current_period_end = Column(DateTime(timezone=True), nullable=True)
-    monthly_price_cents = Column(Integer, default=29900)  # $299/mo starter
-    primary_state = Column(String(2), nullable=True)      # home state for legal defaults
-    logo_url = Column(String(500), nullable=True)
-    primary_color = Column(String(20), nullable=True)
-    custom_domain = Column(String(200), nullable=True)
-    feature_flags = Column(Text, nullable=True)           # JSON: {"catalog": true, "drone": false}
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-    subscription_events = relationship('TenantBillingEvent', back_populates='tenant')
-
-
-class TenantBillingEvent(Base):
-    """Stripe webhook event log per tenant."""
-    __tablename__ = 'tenant_billing_events'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(Integer, ForeignKey('tenant_records.id'), nullable=False, index=True)
-    stripe_event_id = Column(String(100), nullable=False, unique=True)
-    event_type = Column(String(100), nullable=False)       # invoice.paid, subscription.deleted, etc.
-    amount_cents = Column(Integer, nullable=True)
-    status = Column(String(30), nullable=True)
-    raw_json = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-    tenant = relationship('TenantRecord', back_populates='subscription_events')
-
-
-class PlanMarkup(Base):
-    """BIM / site plan with click-to-annotate zone markup.
-
-    Zones JSON schema per element:
-      {id, label, type, area_sqft, catalog_item_id, x_pct, y_pct, w_pct, h_pct, color, notes}
     """
-    __tablename__ = 'plan_markups'
+    A contractor permit lead scraped from Virginia's LIS or other state permit APIs.
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    catalog_project_id = Column(Integer, ForeignKey('catalog_projects.id'), nullable=True, index=True)
-    title = Column(String(200), nullable=False)
-    file_url = Column(String(500), nullable=True)          # uploaded PDF/image/SVG URL
-    file_type = Column(String(20), nullable=True)          # pdf | image | svg
-    thumbnail_url = Column(String(500), nullable=True)
-    zones = Column(Text, nullable=True)                    # JSON array of zone objects
-    total_area_sqft = Column(Float, nullable=True)
-    version = Column(Integer, default=1)
-    is_approved = Column(Boolean, default=False)
-    approved_at = Column(DateTime(timezone=True), nullable=True)
-    notes = Column(Text, nullable=True)
-    tenant_id = Column(String(64), default='default', nullable=True, index=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    Every record is validated through app/schemas/permit_lead.py before insertion
+    to guarantee schema-consistent data for the lead ranking logic.
+    """
+
+    __tablename__ = "permit_leads"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    source           = Column(String(60), nullable=False, default="virginia_lis")
+    permit_number    = Column(String(100), nullable=True, index=True)
+    permit_type      = Column(String(100), nullable=False)
+    permit_status    = Column(String(50), nullable=True)
+
+    # Contractor info
+    contractor_name  = Column(String(200), nullable=True)
+    contractor_license = Column(String(100), nullable=True)
+
+    # Property / project
+    property_address = Column(String(300), nullable=False)
+    property_city    = Column(String(100), nullable=True)
+    property_state   = Column(String(2), nullable=True, default="VA")
+    property_zip     = Column(String(10), nullable=True)
+
+    # Coordinates (WGS84)
+    lat              = Column(Float, nullable=True)
+    lng              = Column(Float, nullable=True)
+
+    # Financial
+    project_value    = Column(Float, nullable=True)
+    estimated_sqft   = Column(Float, nullable=True)
+
+    # Dates
+    permit_date      = Column(DateTime(timezone=True), nullable=True)
+    expiry_date      = Column(DateTime(timezone=True), nullable=True)
+
+    # Scoring / ranking
+    priority_score   = Column(Integer, nullable=True)
+    priority_label   = Column(String(10), nullable=True)   # HOT | WARM | COOL
+
+    # Raw JSON blob from the source API (for auditing)
+    raw_json         = Column(Text, nullable=True)
+
+    scraped_at       = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    created_at       = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<PermitLead id={self.id} address={self.property_address!r} label={self.priority_label!r}>"
 
 
-class QuickBooksSync(Base):
-    """QuickBooks Online sync log — one row per synced entity."""
-    __tablename__ = 'quickbooks_sync'
+class FollowUpTask(Base):
+    """
+    Tracks automated follow-up notifications sent (or scheduled) for a lead.
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), default='default', index=True)
-    entity_type = Column(String(50), nullable=False)       # Invoice | Customer | Payment | Estimate
-    local_id = Column(String(64), nullable=True)           # our DB id
-    qb_id = Column(String(100), nullable=True, index=True) # QuickBooks entity Id
-    sync_direction = Column(String(10), default='push')    # push | pull
-    status = Column(String(30), default='pending')         # pending | synced | error
-    error_message = Column(Text, nullable=True)
-    raw_response = Column(Text, nullable=True)
-    synced_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
+    task_type values: hot_1h | warm_3d | cool_7d
+    status values:    pending | sent | cancelled
+    """
+
+    __tablename__ = "follow_up_tasks"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    lead_id      = Column(Integer, nullable=False, index=True)
+    task_type    = Column(String(30), nullable=False)
+    scheduled_at = Column(DateTime(timezone=True), nullable=False)
+    sent_at      = Column(DateTime(timezone=True), nullable=True)
+    status       = Column(String(20), nullable=False, default="pending")
+    created_at   = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<FollowUpTask id={self.id} lead_id={self.lead_id} type={self.task_type!r} status={self.status!r}>"
+
+
+class TruckPosition(Base):
+    """
+    Real-time truck telemetry ping stored for zero-delay routing dashboard.
+
+    Positions are upserted by truck_id so the table always holds the latest
+    position per truck (old history is not retained — use a time-series store
+    like InfluxDB for historical analytics).
+    """
+
+    __tablename__ = "truck_positions"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    truck_id        = Column(String(30), nullable=False, index=True, unique=True)
+    driver_name     = Column(String(120), nullable=True)
+    lat             = Column(Float, nullable=False)
+    lng             = Column(Float, nullable=False)
+    speed_mph       = Column(Float, nullable=True)
+    heading_deg     = Column(Float, nullable=True)
+    asphalt_temp_f  = Column(Float, nullable=True)
+    mix_type        = Column(String(60), nullable=True)
+    plant_departed_at = Column(DateTime(timezone=True), nullable=True)
+    target_delivery_temp_f = Column(Float, nullable=True)
+    estimated_arrival_minutes = Column(Float, nullable=True)
+    status          = Column(String(30), nullable=True, default="en_route")  # en_route | on_site | idle
+    site_id         = Column(Integer, nullable=True)   # FK to project_sites (soft ref)
+    updated_at      = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<TruckPosition truck={self.truck_id!r} status={self.status!r}>"
 
 
 class GroundScanReport(Base):
-    """811 / subsurface utility locate scan report (Wave 8 road-scanning stack)."""
-    __tablename__ = 'ground_scan_reports'
+    """
+    Civil-tech utility locating and subsurface scan record before digging.
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), default='default', index=True)
-    address = Column(String(300), nullable=True)
-    scan_area_sqft = Column(Float, nullable=True)
-    ticket_811 = Column(String(100), nullable=True)
-    ticket_status = Column(String(40), nullable=True)      # not_started | requested | clear | conflict | expired
-    technologies = Column(Text, nullable=True)             # JSON array of scan technologies used
-    utilities = Column(Text, nullable=True)                # JSON array of utility findings
-    risk_level = Column(String(10), nullable=True)         # LOW | MEDIUM | HIGH
-    confidence = Column(Float, nullable=True)
-    recommendation = Column(Text, nullable=True)
-    notes = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
+    Supports modern locate workflows: 811 ticket tracking, electromagnetic
+    locating, GPR, potholing/vacuum excavation, LiDAR/as-built overlays,
+    thermal/moisture flags, soil/base concerns, and AI risk summarisation.
+    """
+
+    __tablename__ = "ground_scan_reports"
+
+    id                 = Column(Integer, primary_key=True, index=True)
+    project_site_id    = Column(Integer, nullable=True, index=True)
+    address            = Column(String(300), nullable=True)
+    scan_area_sqft     = Column(Float, nullable=True)
+    ticket_811         = Column(String(100), nullable=True)
+    ticket_status      = Column(String(40), nullable=True)
+    technologies_json  = Column(Text, nullable=True)
+    utilities_json     = Column(Text, nullable=True)
+    risk_level         = Column(String(20), nullable=False, default="UNKNOWN")
+    confidence         = Column(Float, nullable=True)
+    recommendation     = Column(Text, nullable=True)
+    notes              = Column(Text, nullable=True)
+    tenant_id          = Column(String(60), nullable=True, index=True, default="default")
+    created_at         = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
 
-class RevokedToken(Base):
-    """JWT revocation blocklist — admin and portal tokens (Wave 9, closes M2)."""
-    __tablename__ = 'revoked_tokens'
+# ── Multi-turn chat session ───────────────────────────────────────────────────
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    jti = Column(String(64), nullable=False, unique=True, index=True)
-    token_type = Column(String(20), default='admin')   # admin | portal
-    expires_at = Column(DateTime(timezone=True), nullable=True)  # prune rows after this
-    revoked_at = Column(DateTime(timezone=True), default=utcnow)
+class ChatSession(Base):
+    """Stores serialised conversation history for multi-turn AI chat."""
+
+    __tablename__ = "chat_sessions"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    session_id      = Column(String(100), nullable=False, index=True, unique=True)
+    messages_json   = Column(Text, nullable=False, default="[]")
+    customer_name   = Column(String(120), nullable=True)
+    customer_email  = Column(String(254), nullable=True)
+    state_code      = Column(String(2),   nullable=True)
+    last_service    = Column(String(60),  nullable=True)
+    created_at      = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at      = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<ChatSession session_id={self.session_id!r}>"
+
+
+# ── Human review queue ────────────────────────────────────────────────────────
+
+class HumanReviewQueue(Base):
+    """Holds low-confidence AI decisions flagged for manual review."""
+
+    __tablename__ = "human_review_queue"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    decision_type   = Column(String(60),  nullable=False)     # chat | compliance | lead_score …
+    input_summary   = Column(String(500), nullable=False)
+    ai_answer       = Column(Text,        nullable=False)
+    ai_engine       = Column(String(60),  nullable=True)      # gpt-4o-mini | gpt-4o | stub
+    confidence      = Column(Float,       nullable=True)
+    status          = Column(String(20),  nullable=False, default="pending")  # pending | approved | rejected
+    reviewer_note   = Column(Text,        nullable=True)
+    tenant_id       = Column(String(60),  nullable=True, index=True, default="default")
+    created_at      = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    resolved_at     = Column(DateTime(timezone=True), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<HumanReviewQueue id={self.id} decision={self.decision_type!r} status={self.status!r}>"
+
+
+# ── Mechanics lien calendar ───────────────────────────────────────────────────
+
+class LienCalendarEntry(Base):
+    """Tracks lien filing deadlines for active construction projects."""
+
+    __tablename__ = "lien_calendar_entries"
+
+    id                          = Column(Integer, primary_key=True, index=True)
+    customer_name               = Column(String(120), nullable=False)
+    project_address             = Column(String(300), nullable=False)
+    state_code                  = Column(String(2),   nullable=False, index=True)
+    project_start_date          = Column(DateTime(timezone=True), nullable=True)
+    last_furnishing_date        = Column(DateTime(timezone=True), nullable=True)
+    preliminary_notice_deadline = Column(DateTime(timezone=True), nullable=True)
+    lien_filing_deadline        = Column(DateTime(timezone=True), nullable=True)
+    foreclosure_deadline        = Column(DateTime(timezone=True), nullable=True)
+    notes                       = Column(Text, nullable=True)
+    tenant_id                   = Column(String(60), nullable=True, index=True, default="default")
+    created_at                  = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<LienCalendarEntry id={self.id} state={self.state_code!r} customer={self.customer_name!r}>"
+
+
+# ── Blog ──────────────────────────────────────────────────────────────────────
+
+class BlogPost(Base):
+    """CMS blog post for the JWordenAI content hub."""
+
+    __tablename__ = "blog_posts"
+    __table_args__ = (UniqueConstraint("slug", name="uq_blog_posts_slug"),)
+
+    id               = Column(Integer, primary_key=True, index=True)
+    slug             = Column(String(200), nullable=False, index=True)
+    title            = Column(String(300), nullable=False)
+    excerpt          = Column(String(500), nullable=False, default="")
+    body             = Column(Text,        nullable=False, default="")
+    category         = Column(String(60),  nullable=True)
+    tags             = Column(String(500), nullable=True)
+    meta_title       = Column(String(300), nullable=True)
+    meta_description = Column(String(320), nullable=True)
+    focus_keyword    = Column(String(120), nullable=True)
+    author_name      = Column(String(120), nullable=True, default="J. Worden & Sons")
+    image_url        = Column(String(500), nullable=True)
+    featured         = Column(Integer, nullable=False, default=0)        # 0 | 1
+    status           = Column(String(20),  nullable=False, default="draft")  # draft | published | archived
+    read_time_minutes= Column(Integer, nullable=True)
+    published_at     = Column(DateTime(timezone=True), nullable=True)
+    tenant_id        = Column(String(60),  nullable=True, index=True, default="default")
+    created_at       = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at       = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<BlogPost slug={self.slug!r} status={self.status!r}>"
+
+
+# ── Cash-flow ─────────────────────────────────────────────────────────────────
+
+class CashFlowEntry(Base):
+    """Income or expense entry for the cash-flow projection board."""
+
+    __tablename__ = "cashflow_entries"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    entry_type      = Column(String(20),  nullable=False)        # income | expense
+    amount          = Column(Float,       nullable=False)
+    expected_date   = Column(DateTime(timezone=True), nullable=False)
+    category        = Column(String(60),  nullable=True)
+    description     = Column(String(500), nullable=True)
+    source          = Column(String(60),  nullable=True, default="manual")
+    source_id       = Column(Integer,     nullable=True)         # FK to leads or payment_transactions
+    tenant_id       = Column(String(60),  nullable=True, index=True, default="default")
+    created_at      = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<CashFlowEntry type={self.entry_type!r} amount={self.amount}>"
+
+
+class CashFlowAlert(Base):
+    """Per-tenant threshold alert for low projected cash balance."""
+
+    __tablename__ = "cashflow_alerts"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    threshold_amount = Column(Float,       nullable=False)
+    alert_email      = Column(String(254), nullable=False)
+    tenant_id        = Column(String(60),  nullable=True, index=True, default="default")
+    updated_at       = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<CashFlowAlert threshold={self.threshold_amount} email={self.alert_email!r}>"
+
+
+# ── Customer CRM ──────────────────────────────────────────────────────────────
+
+class Customer(Base):
+    """CRM customer record — residential, commercial, or franchise client."""
+
+    __tablename__ = "customers"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    name            = Column(String(120), nullable=False)
+    email           = Column(String(254), nullable=True, index=True)
+    phone           = Column(String(30),  nullable=True)
+    company         = Column(String(120), nullable=True)
+    address         = Column(String(300), nullable=True)
+    city            = Column(String(100), nullable=True)
+    state_code      = Column(String(2),   nullable=True, index=True)
+    zip_code        = Column(String(10),  nullable=True)
+    customer_type   = Column(String(30),  nullable=True)    # residential | commercial | franchise
+    is_franchise    = Column(Integer, nullable=False, default=0)
+    brand           = Column(String(60),  nullable=True)    # KFC | Taco Bell | etc.
+    notes           = Column(Text,        nullable=True)
+    tags            = Column(String(500), nullable=True)
+    external_id     = Column(String(100), nullable=True)
+    source          = Column(String(60),  nullable=True, default="manual")
+    total_jobs      = Column(Integer, nullable=False, default=0)
+    total_revenue   = Column(Float,   nullable=False, default=0.0)
+    last_job_date   = Column(DateTime(timezone=True), nullable=True)
+    tenant_id       = Column(String(60), nullable=True, index=True, default="default")
+    created_at      = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at      = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<Customer id={self.id} name={self.name!r}>"
+
+
+class ServiceHistory(Base):
+    """A completed service job linked to a Customer."""
+
+    __tablename__ = "service_history"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    customer_id      = Column(Integer, nullable=False, index=True)    # FK to customers.id
+    job_date         = Column(DateTime(timezone=True), nullable=True)
+    service_type     = Column(String(60),  nullable=True)
+    scope_summary    = Column(Text,        nullable=True)
+    location         = Column(String(300), nullable=True)
+    state_code       = Column(String(2),   nullable=True)
+    sqft             = Column(Float,       nullable=True)
+    revenue          = Column(Float,       nullable=True)
+    is_qsr           = Column(Integer, nullable=False, default=0)
+    brand            = Column(String(60),  nullable=True)
+    warranty_callback= Column(Integer, nullable=False, default=0)
+    gc_score         = Column(Float,       nullable=True)
+    has_photos       = Column(Integer, nullable=False, default=0)
+    dropbox_url      = Column(String(500), nullable=True)
+    photos_url       = Column(String(500), nullable=True)
+    notes            = Column(Text,        nullable=True)
+    tenant_id        = Column(String(60),  nullable=True, index=True, default="default")
+    created_at       = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<ServiceHistory id={self.id} customer_id={self.customer_id}>"
+
+
+class Estimate(Base):
+    """Commercial estimate record derived from a lead and used to start a job."""
+
+    __tablename__ = "estimates"
+
+    id                = Column(Integer, primary_key=True, index=True)
+    lead_id           = Column(Integer, nullable=True, index=True)
+    customer_id       = Column(Integer, nullable=True, index=True)
+    estimate_number   = Column(String(80), nullable=False, unique=True, index=True)
+    status            = Column(String(30), nullable=False, default="draft")  # draft | sent | approved | rejected | converted
+    service_type      = Column(String(60), nullable=True)
+    scope_summary     = Column(Text, nullable=True)
+    amount_low        = Column(Float, nullable=True)
+    amount_high       = Column(Float, nullable=True)
+    currency          = Column(String(10), nullable=False, default="usd")
+    state_code        = Column(String(2), nullable=True, index=True)
+    tenant_id         = Column(String(60), nullable=True, index=True, default="default")
+    created_at        = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at        = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<Estimate id={self.id} number={self.estimate_number!r} status={self.status!r}>"
+
+
+class Job(Base):
+    """Primary operational job record created from an approved estimate."""
+
+    __tablename__ = "jobs"
+
+    id                = Column(Integer, primary_key=True, index=True)
+    estimate_id       = Column(Integer, nullable=True, index=True)
+    lead_id           = Column(Integer, nullable=True, index=True)
+    customer_id       = Column(Integer, nullable=True, index=True)
+    job_number        = Column(String(80), nullable=False, unique=True, index=True)
+    name              = Column(String(200), nullable=False)
+    status            = Column(String(30), nullable=False, default="scheduled")  # scheduled | active | blocked | completed | cancelled
+    service_type      = Column(String(60), nullable=True)
+    site_address      = Column(String(300), nullable=True)
+    state_code        = Column(String(2), nullable=True, index=True)
+    scheduled_start   = Column(DateTime(timezone=True), nullable=True)
+    scheduled_end     = Column(DateTime(timezone=True), nullable=True)
+    progress_percent  = Column(Integer, nullable=False, default=0)
+    progress_notes    = Column(Text, nullable=True)
+    completed_at      = Column(DateTime(timezone=True), nullable=True)
+    tenant_id         = Column(String(60), nullable=True, index=True, default="default")
+    created_at        = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at        = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<Job id={self.id} number={self.job_number!r} status={self.status!r}>"
+
+
+class ProjectDocument(Base):
+    """Customer-facing job document persisted for admin and portal workflows."""
+
+    __tablename__ = "project_documents"
+
+    id                = Column(String(36), primary_key=True, index=True)
+    job_id            = Column(Integer, nullable=False, index=True)
+    client_email      = Column(String(254), nullable=True, index=True)
+    document_type     = Column(String(40), nullable=False, default="other")
+    title             = Column(String(200), nullable=False)
+    description       = Column(Text, nullable=True)
+    filename          = Column(String(300), nullable=False)
+    mime_type         = Column(String(120), nullable=True)
+    file_size_bytes   = Column(Integer, nullable=True)
+    file_url          = Column(Text, nullable=False)
+    visible_to_client = Column(Boolean, nullable=False, default=True)
+    uploaded_by       = Column(String(120), nullable=True)
+    tenant_id         = Column(String(60), nullable=True, index=True, default="default")
+    created_at        = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at        = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<ProjectDocument id={self.id!r} job_id={self.job_id} type={self.document_type!r}>"
+
+
+class WorkOrder(Base):
+    """Field-execution unit of work under a job for crews and dispatch."""
+
+    __tablename__ = "work_orders"
+
+    id                = Column(Integer, primary_key=True, index=True)
+    job_id            = Column(Integer, nullable=False, index=True)
+    work_order_number = Column(String(80), nullable=False, unique=True, index=True)
+    title             = Column(String(200), nullable=False)
+    status            = Column(String(30), nullable=False, default="scheduled")  # scheduled | dispatched | in_progress | completed | blocked
+    assigned_crew     = Column(String(120), nullable=True)
+    scheduled_for     = Column(DateTime(timezone=True), nullable=True)
+    completed_at      = Column(DateTime(timezone=True), nullable=True)
+    notes             = Column(Text, nullable=True)
+    tenant_id         = Column(String(60), nullable=True, index=True, default="default")
+    created_at        = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at        = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<WorkOrder id={self.id} number={self.work_order_number!r} status={self.status!r}>"
+
+
+# ── iGrade & media files ──────────────────────────────────────────────────────
+
+class GradeLog(Base):
+    """iGrade engine decision log — records grade + model + confidence per AI call."""
+
+    __tablename__ = "grade_logs"
+
+    id                 = Column(Integer, primary_key=True, index=True)
+    decision_type      = Column(String(60),  nullable=False, index=True)
+    grade              = Column(String(1),   nullable=False)    # A | B | C | D
+    input_summary      = Column(String(500), nullable=True)
+    ai_engine          = Column(String(60),  nullable=True)
+    confidence         = Column(Float,       nullable=True)
+    processing_ms      = Column(Integer,     nullable=True)
+    was_corrected      = Column(Integer, nullable=False, default=0)
+    correction_applied = Column(Integer, nullable=False, default=0)
+    tenant_id          = Column(String(60),  nullable=True, index=True, default="default")
+    created_at         = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<GradeLog id={self.id} grade={self.grade!r} type={self.decision_type!r}>"
+
+
+class MediaFile(Base):
+    """Project media file record (photos, PDFs, videos)."""
+
+    __tablename__ = "media_files"
+
+    id                = Column(Integer, primary_key=True, index=True)
+    filename          = Column(String(300), nullable=False)
+    file_type         = Column(String(20),  nullable=True)    # image | pdf | video
+    mime_type         = Column(String(100), nullable=True)
+    file_size_bytes   = Column(Integer,     nullable=True)
+    storage_url       = Column(String(1000),nullable=False)
+    storage_provider  = Column(String(60),  nullable=True, default="local")
+    linked_to_type    = Column(String(60),  nullable=True)    # lead | project_site | customer
+    linked_to_id      = Column(Integer,     nullable=True)
+    project_name      = Column(String(200), nullable=True)
+    tags              = Column(String(500), nullable=True)
+    ai_description    = Column(Text,        nullable=True)
+    tenant_id         = Column(String(60),  nullable=True, index=True, default="default")
+    created_at        = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<MediaFile id={self.id} filename={self.filename!r}>"
+
+
+# ── Innovations tracker ───────────────────────────────────────────────────────
+
+class Innovation(Base):
+    """Tracks experimental paving methods, tools, and QSR innovations."""
+
+    __tablename__ = "innovations"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    method_name     = Column(String(200), nullable=False)
+    job_site        = Column(String(300), nullable=True)
+    date_tested     = Column(DateTime(timezone=True), nullable=True)
+    cost_to_test    = Column(Float,       nullable=True)
+    result          = Column(String(30),  nullable=False, default="pending")  # pass | fail | adopted | pending
+    category        = Column(String(60),  nullable=True)   # drone | materials | robotics | process
+    notes           = Column(Text,        nullable=True)
+    tenant_id       = Column(String(60),  nullable=True, index=True, default="default")
+    created_at      = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at      = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<Innovation id={self.id} name={self.method_name!r} result={self.result!r}>"
+
+
+# ── Payments ──────────────────────────────────────────────────────────────────
+
+class PaymentTransaction(Base):
+    """Stripe checkout session / payment record linked to a lead."""
+
+    __tablename__ = "payment_transactions"
+
+    id                          = Column(Integer, primary_key=True, index=True)
+    lead_id                     = Column(Integer, nullable=False, index=True)
+    stripe_checkout_session_id  = Column(String(200), nullable=True, index=True)
+    stripe_payment_intent_id    = Column(String(200), nullable=True)
+    amount_usd                  = Column(Float,       nullable=False)
+    currency                    = Column(String(10),  nullable=False, default="usd")
+    status                      = Column(String(30),  nullable=False, default="pending")  # pending | paid | failed | refunded
+    paid_at                     = Column(DateTime(timezone=True), nullable=True)
+    tenant_id                   = Column(String(60),  nullable=True, index=True, default="default")
+    created_at                  = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<PaymentTransaction id={self.id} lead_id={self.lead_id} status={self.status!r}>"
+
+
+# ── Project metrics ───────────────────────────────────────────────────────────
+
+class ProjectMetric(Base):
+    """Post-completion project KPIs for benchmarking and retro analysis."""
+
+    __tablename__ = "project_metrics"
+
+    id                 = Column(Integer, primary_key=True, index=True)
+    project_name       = Column(String(200), nullable=False)
+    lead_id            = Column(Integer,     nullable=True, index=True)
+    actual_cost        = Column(Float,       nullable=True)
+    estimated_cost     = Column(Float,       nullable=True)
+    scheduled_days     = Column(Integer,     nullable=True)
+    actual_days        = Column(Integer,     nullable=True)
+    client_nps         = Column(Integer,     nullable=True)    # 0-10
+    punch_list_items   = Column(Integer, nullable=False, default=0)
+    punch_list_closed  = Column(Integer, nullable=False, default=0)
+    completion_date    = Column(DateTime(timezone=True), nullable=True)
+    ai_summary         = Column(Text,        nullable=True)
+    tenant_id          = Column(String(60),  nullable=True, index=True, default="default")
+    created_at         = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at         = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<ProjectMetric id={self.id} project={self.project_name!r}>"
+
+
+# ── Project retrospectives ────────────────────────────────────────────────────
+
+class ProjectRetrospective(Base):
+    """AI-assisted lessons-learned record after project close-out."""
+
+    __tablename__ = "project_retrospectives"
+
+    id                     = Column(Integer, primary_key=True, index=True)
+    project_name           = Column(String(200), nullable=False)
+    project_type           = Column(String(60),  nullable=True)
+    region                 = Column(String(100), nullable=True)
+    closed_date            = Column(DateTime(timezone=True), nullable=True)
+    schedule_variance_days = Column(Integer, nullable=True)
+    cost_variance_pct      = Column(Float,   nullable=True)
+    supply_chain_issues    = Column(Text,    nullable=True)
+    soil_conditions        = Column(Text,    nullable=True)
+    design_conflicts       = Column(Text,    nullable=True)
+    lessons_learned        = Column(Text,    nullable=True)
+    ai_summary             = Column(Text,    nullable=True)
+    tenant_id              = Column(String(60), nullable=True, index=True, default="default")
+    created_at             = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at             = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<ProjectRetrospective id={self.id} project={self.project_name!r}>"
+
+
+# ── Site metrics / dashboard ──────────────────────────────────────────────────
+
+class SiteEvaluation(Base):
+    """
+    Monthly compliance + ad-ROI snapshot used by the Command Center dashboard.
+
+    Records are inserted once per month (or on demand via admin tooling).
+    The ``compliance_score`` is a 0-100 percentage; ``ad_roi`` is a multiplier
+    (e.g. 3.1 means $3.10 returned per $1 spent).
+    """
+
+    __tablename__ = "site_evaluations"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    compliance_score = Column(Float,   nullable=False)          # 0-100
+    ad_roi           = Column(Float,   nullable=False)          # e.g. 3.1
+    notes            = Column(Text,    nullable=True)
+    tenant_id        = Column(String(60), nullable=True, index=True, default="default")
+    last_checked     = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    created_at       = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<SiteEvaluation id={self.id} compliance={self.compliance_score} roi={self.ad_roi}>"
+
+
+# ── Regional Base Evaluator ───────────────────────────────────────────────────
+
+class RegionalBaseEvaluation(Base):
+    """
+    Per-site regional base evaluation driven by local DOT specs, soil data,
+    and environmental conditions.  Replaces the flat 6-inch base assumption
+    with a calculated depth for each site location.
+
+    Fields:
+      site_location       — Human-readable address / area (e.g. "Tuckahoe, VA")
+      dot_standard        — VDOT or state DOT spec applied (e.g. "VDOT SM-9.5A")
+      soil_type           — 0.0 (very soft/clay) to 1.0 (hard/rock) bearing index
+      required_base_depth — Calculated minimum aggregate base depth in inches
+      compliance_status   — Pending | Compliant | NonCompliant | Waived
+      evaluated_by        — Who/what engine ran the evaluation (e.g. "SupremeCourtAI")
+      notes               — Free-text evaluation notes / recommendations
+      tenant_id           — Multi-tenant isolation key
+    """
+
+    __tablename__ = "regional_base_evaluations"
+
+    id                  = Column(Integer, primary_key=True, index=True)
+    site_location       = Column(String(300), nullable=False)
+    dot_standard        = Column(String(120), nullable=True)
+    soil_type           = Column(Float,       nullable=True)   # 0.0–1.0
+    required_base_depth = Column(Float,       nullable=True)   # inches
+    compliance_status   = Column(String(30),  nullable=False, default="Pending")
+    evaluated_by        = Column(String(80),  nullable=True, default="SupremeCourtAI")
+    notes               = Column(Text,        nullable=True)
+    tenant_id           = Column(String(60),  nullable=True, index=True, default="default")
+    created_at          = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at          = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return (
+            f"<RegionalBaseEvaluation id={self.id} "
+            f"location={self.site_location!r} depth={self.required_base_depth}in "
+            f"status={self.compliance_status!r}>"
+        )
+
+
+# ── Compaction telemetry ──────────────────────────────────────────────────────
+
+class CompactionLog(Base):
+    """
+    GPS-tagged compaction pass record from intelligent rollers.
+
+    Each ping represents one compaction pass at a specific lat/lng.
+    Aggregate these records by project_site_id to render a heat map of
+    pass count and mat density across the paving surface.
+
+    Fields:
+      roller_id         — Equipment ID or tail number
+      pass_number       — Sequential pass count at this location
+      mat_temp_f        — Asphalt mat temperature at time of pass (°F)
+      mat_thickness_in  — Measured mat thickness (inches)
+      density_pct       — Achieved density as % of target (e.g. 96.5)
+      speed_mph         — Roller ground speed during pass
+      gps_accuracy_ft   — GPS fix accuracy (feet)
+    """
+
+    __tablename__ = "compaction_logs"
+
+    id                = Column(Integer, primary_key=True, index=True)
+    project_site_id   = Column(Integer, nullable=True, index=True)
+    roller_id         = Column(String(60), nullable=False, index=True)
+    operator_name     = Column(String(120), nullable=True)
+    lat               = Column(Float, nullable=False)
+    lng               = Column(Float, nullable=False)
+    pass_number       = Column(Integer, nullable=True)
+    mat_temp_f        = Column(Float, nullable=True)
+    mat_thickness_in  = Column(Float, nullable=True)
+    density_pct       = Column(Float, nullable=True)   # % of target density
+    speed_mph         = Column(Float, nullable=True)
+    gps_accuracy_ft   = Column(Float, nullable=True)
+    notes             = Column(Text,  nullable=True)
+    tenant_id         = Column(String(60), nullable=True, index=True, default="default")
+    logged_at         = Column(DateTime(timezone=True), default=_utcnow, nullable=False, index=True)
+    created_at        = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return (
+            f"<CompactionLog id={self.id} roller={self.roller_id!r} "
+            f"site={self.project_site_id} density={self.density_pct}%>"
+        )
+
+
+# ── Drone scan records ────────────────────────────────────────────────────────
+
+class DroneScan(Base):
+    """
+    Drone-based site capture record (photogrammetry, LiDAR, or thermal).
+
+    Stores the scan metadata, AI-detected findings, and a GeoJSON summary
+    of detected deviations or missing elements against the design model.
+
+    Fields:
+      scan_type         — photogrammetry | lidar | thermal | rgb
+      resolution_cm     — Ground sample distance (cm); lower = more precise
+      coverage_sqft     — Area covered by the flight
+      geojson_summary   — FeatureCollection JSON of detected anomalies
+      findings_json     — Structured list of AI-flagged issues
+      deviation_count   — Number of deviations vs design model
+      risk_level        — LOW | MEDIUM | HIGH | CRITICAL
+    """
+
+    __tablename__ = "drone_scans"
+
+    id                = Column(Integer, primary_key=True, index=True)
+    project_site_id   = Column(Integer, nullable=False, index=True)
+    scan_type         = Column(String(60), nullable=False, default="photogrammetry")
+    operator_name     = Column(String(120), nullable=True)
+    drone_model       = Column(String(120), nullable=True)
+    flight_altitude_ft = Column(Float, nullable=True)
+    coverage_sqft     = Column(Float, nullable=True)
+    resolution_cm     = Column(Float, nullable=True)   # ground sample distance
+    geojson_url       = Column(String(500), nullable=True)   # remote storage URL
+    geojson_summary   = Column(Text, nullable=True)          # FeatureCollection JSON
+    findings_json     = Column(Text, nullable=True)          # [{issue, severity, lat, lng}]
+    ai_summary        = Column(Text, nullable=True)
+    deviation_count   = Column(Integer, nullable=True, default=0)
+    risk_level        = Column(String(20), nullable=False, default="UNKNOWN")
+    notes             = Column(Text, nullable=True)
+    tenant_id         = Column(String(60), nullable=True, index=True, default="default")
+    scanned_at        = Column(DateTime(timezone=True), default=_utcnow, nullable=False, index=True)
+    created_at        = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return (
+            f"<DroneScan id={self.id} site={self.project_site_id} "
+            f"type={self.scan_type!r} risk={self.risk_level!r}>"
+        )
+
+
+# ── 50-State License Compliance ───────────────────────────────────────────────
+
+class LicenseVerificationLog(Base):
+    """
+    Immutable audit record for every contractor/subcontractor license check.
+
+    Each time the compliance engine verifies a license (scheduled daily or
+    on-demand), a new row is inserted.  Never updated — query by
+    ``license_number + state_code`` ordered by ``checked_at`` desc for the
+    latest status.
+
+    Fields:
+      entity_name     — Business name on the license (as returned by the API)
+      state_code      — Two-letter state code (e.g. "VA", "CA")
+      license_number  — License ID from the state board
+      license_type    — e.g. "Class A Contractor", "C-32 Asphalt"
+      status          — Active | Expired | Suspended | Cancelled | Unknown
+      expiration_date — Parsed expiration date (nullable)
+      days_until_exp  — Computed days remaining at time of check
+      is_compliant    — True when status == Active and not within 7-day window
+      api_source      — Which provider returned the result (Apify | Shovels | stub)
+      raw_json        — Full API response blob for audit
+      subcontractor_id — FK to subcontractor roster (soft ref, nullable)
+      tenant_id       — Multi-tenant isolation key
+    """
+
+    __tablename__ = "license_verification_logs"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    entity_name      = Column(String(200), nullable=True)
+    state_code       = Column(String(2),   nullable=False, index=True)
+    license_number   = Column(String(100), nullable=False, index=True)
+    license_type     = Column(String(120), nullable=True)
+    status           = Column(String(40),  nullable=False, default="Unknown")
+    expiration_date  = Column(DateTime(timezone=True), nullable=True)
+    days_until_exp   = Column(Integer, nullable=True)
+    is_compliant     = Column(Boolean, nullable=False, default=False)
+    api_source       = Column(String(60), nullable=True)
+    raw_json         = Column(Text, nullable=True)
+    subcontractor_id = Column(Integer, nullable=True, index=True)
+    tenant_id        = Column(String(60), nullable=True, index=True, default="default")
+    checked_at       = Column(DateTime(timezone=True), default=_utcnow, nullable=False, index=True)
+    created_at       = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return (
+            f"<LicenseVerificationLog id={self.id} "
+            f"state={self.state_code} lic={self.license_number!r} "
+            f"status={self.status!r} compliant={self.is_compliant}>"
+        )
+
+
+# ── Advertising Intelligence ──────────────────────────────────────────────────
+
+class AdUrlExclusion(Base):
+    """
+    URL path patterns excluded from Google Ads AI Max URL expansion.
+
+    Prevents the AI Max system from routing paid traffic to non-converting
+    pages (blog, careers, FAQ, legal, admin).  Default patterns are hardcoded
+    in ad_signals.py; this table stores operator-added custom exclusions.
+    """
+
+    __tablename__ = "ad_url_exclusions"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    path_pattern = Column(String(300), nullable=False, unique=True)
+    reason       = Column(String(200), nullable=True)
+    created_by   = Column(String(120), nullable=True)
+    tenant_id    = Column(String(60),  nullable=True, index=True, default="default")
+    is_active    = Column(Boolean,     nullable=False, default=True)
+    created_at   = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<AdUrlExclusion id={self.id} pattern={self.path_pattern!r} active={self.is_active}>"
+
+
+class AnomalyAlert(Base):
+    """
+    Persistent anomaly detection alerts for key business metrics.
+
+    Generated by anomaly_detector.run_all_checks() and persisted by
+    persist_anomalies().  The Celery beat task runs every 30 minutes.
+    Alerts are resolved manually via the /api/v1/ads/anomalies/{id}/resolve
+    endpoint, or automatically when the underlying condition clears.
+
+    Metrics: lead_volume_24h | hot_lead_rate | cool_lead_surge | zero_lead_gap
+    Severity: LOW | MEDIUM | HIGH | CRITICAL
+    """
+
+    __tablename__ = "anomaly_alerts"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    metric_name     = Column(String(80),  nullable=False, index=True)
+    current_value   = Column(Float,       nullable=False)
+    baseline_value  = Column(Float,       nullable=False)
+    z_score         = Column(Float,       nullable=True)
+    severity        = Column(String(10),  nullable=False, index=True)
+    message         = Column(String(500), nullable=False)
+    resolved_at     = Column(DateTime(timezone=True), nullable=True)
+    tenant_id       = Column(String(60),  nullable=True, index=True, default="default")
+    detected_at     = Column(DateTime(timezone=True), nullable=False, default=_utcnow, index=True)
+    created_at      = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+
+    def __repr__(self) -> str:
+        return f"<AnomalyAlert id={self.id} metric={self.metric_name!r} severity={self.severity!r}>"
+
+
+# ── Safety ────────────────────────────────────────────────────────────────────
+
+class SafetyToolboxTalk(Base):
+    """Daily toolbox safety talk — documented pre-shift safety briefing."""
+
+    __tablename__ = "safety_toolbox_talks"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    job_site    = Column(String(300), nullable=False)
+    talk_date   = Column(DateTime(timezone=True), nullable=False)
+    topic       = Column(String(200), nullable=True)
+    foreman     = Column(String(120), nullable=True)
+    crew_count  = Column(Integer,     nullable=True)
+    signed_off  = Column(Integer, nullable=False, default=0)
+    notes       = Column(Text,    nullable=True)
+    tenant_id   = Column(String(60), nullable=True, index=True, default="default")
+    created_at  = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<SafetyToolboxTalk id={self.id} site={self.job_site!r}>"
+
+
+class SafetyIncident(Base):
+    """OSHA recordable / near-miss incident log."""
+
+    __tablename__ = "safety_incidents"
+
+    id                = Column(Integer, primary_key=True, index=True)
+    job_site          = Column(String(300), nullable=False)
+    incident_date     = Column(DateTime(timezone=True), nullable=False)
+    incident_type     = Column(String(100), nullable=True)   # near_miss | first_aid | recordable | fatality
+    root_cause        = Column(String(200), nullable=True)
+    description       = Column(Text,        nullable=True)
+    corrective_action = Column(Text,        nullable=True)
+    osha_recordable   = Column(Integer, nullable=False, default=0)
+    days_away         = Column(Integer,     nullable=True)
+    tenant_id         = Column(String(60),  nullable=True, index=True, default="default")
+    created_at        = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<SafetyIncident id={self.id} site={self.job_site!r}>"
+
+
+# ── Subcontractors ────────────────────────────────────────────────────────────
+
+class SubcontractorRoster(Base):
+    """Directory of subcontractors with license / insurance tracking."""
+
+    __tablename__ = "subcontractor_roster"
+
+    id                = Column(Integer, primary_key=True, index=True)
+    name              = Column(String(120), nullable=False)
+    company           = Column(String(120), nullable=True)
+    email             = Column(String(254), nullable=True)
+    phone             = Column(String(30),  nullable=True)
+    state_code        = Column(String(2),   nullable=False, index=True)
+    license_number    = Column(String(100), nullable=True)
+    license_expiry    = Column(DateTime(timezone=True), nullable=True)
+    insurance_expiry  = Column(DateTime(timezone=True), nullable=True)
+    bond_expiry       = Column(DateTime(timezone=True), nullable=True)
+    bond_amount       = Column(Float,       nullable=True)
+    insurance_carrier = Column(String(120), nullable=True)
+    notes             = Column(Text,        nullable=True)
+    tenant_id         = Column(String(60),  nullable=True, index=True, default="default")
+    created_at        = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at        = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<SubcontractorRoster id={self.id} name={self.name!r}>"
+
+
+class SubcontractorPerformance(Base):
+    """Per-project performance review for a subcontractor."""
+
+    __tablename__ = "subcontractor_performance"
+
+    id                  = Column(Integer, primary_key=True, index=True)
+    subcontractor_id    = Column(Integer, nullable=True, index=True)    # FK to subcontractor_roster.id
+    project_name        = Column(String(200), nullable=False)
+    scope               = Column(String(200), nullable=True)
+    on_time             = Column(Integer, nullable=False, default=1)
+    quality_rating      = Column(Integer, nullable=True)                # 1-5
+    payment_dispute     = Column(Integer, nullable=False, default=0)
+    rehire_recommended  = Column(Integer, nullable=False, default=1)
+    notes               = Column(Text,    nullable=True)
+    project_date        = Column(DateTime(timezone=True), nullable=True)
+    tenant_id           = Column(String(60), nullable=True, index=True, default="default")
+    created_at          = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<SubcontractorPerformance id={self.id} project={self.project_name!r}>"
+
+
+# ── Workforce ─────────────────────────────────────────────────────────────────
+
+class WorkforceMember(Base):
+    """Employee or subcontractor crew member with skills and availability."""
+
+    __tablename__ = "workforce_members"
+
+    id                = Column(Integer, primary_key=True, index=True)
+    name              = Column(String(120), nullable=False)
+    member_type       = Column(String(30),  nullable=False, default="employee")  # employee | sub
+    trade             = Column(String(60),  nullable=True)
+    certifications    = Column(Text,        nullable=True)    # JSON list
+    skill_ratings     = Column(Text,        nullable=True)    # JSON dict {trade: 1-5}
+    available         = Column(Integer, nullable=False, default=1)
+    subcontractor_id  = Column(Integer, nullable=True)
+    phone             = Column(String(30),  nullable=True)
+    email             = Column(String(254), nullable=True)
+    notes             = Column(Text,        nullable=True)
+    tenant_id         = Column(String(60),  nullable=True, index=True, default="default")
+    created_at        = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at        = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<WorkforceMember id={self.id} name={self.name!r}>"
+
+
+
+# ── Bid intelligence / proposal outcomes ─────────────────────────────────────
+
+class ProposalOutcome(Base):
+    """Win/loss outcome record for competitive bid intelligence."""
+
+    __tablename__ = "proposal_outcomes"
+
+    id                   = Column(Integer, primary_key=True, index=True)
+    lead_id              = Column(Integer,     nullable=True, index=True)
+    lead_name            = Column(String(200), nullable=True)
+    service_type         = Column(String(60),  nullable=True)
+    region               = Column(String(100), nullable=True)
+    proposal_amount_low  = Column(Float,       nullable=True)
+    proposal_amount_high = Column(Float,       nullable=True)
+    outcome              = Column(String(30),  nullable=False, default="pending")  # won | lost | pending
+    competitor_name      = Column(String(120), nullable=True)
+    competitor_price     = Column(Float,       nullable=True)
+    notes                = Column(Text,        nullable=True)
+    tenant_id            = Column(String(60),  nullable=True, index=True, default="default")
+    created_at           = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at           = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<ProposalOutcome id={self.id} outcome={self.outcome!r}>"
+
+
+# ── AI Corrections ────────────────────────────────────────────────────────────
+
+class AICorrection(Base):
+    """Human-approved correction pattern injected into future AI prompts."""
+
+    __tablename__ = "ai_corrections"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    decision_type    = Column(String(60),  nullable=False, index=True)
+    input_pattern    = Column(String(500), nullable=False)
+    corrected_answer = Column(Text,        nullable=False)
+    reviewer_notes   = Column(Text,        nullable=True)
+    usage_count      = Column(Integer, nullable=False, default=0)
+    tenant_id        = Column(String(60),  nullable=True, index=True, default="default")
+    created_at       = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at       = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<AICorrection id={self.id} type={self.decision_type!r}>"
+
+
+# ── Gallery ───────────────────────────────────────────────────────────────────
+
+class GalleryImage(Base):
+    """Job photo uploaded via the public gallery — stored as a base64 data URI."""
+
+    __tablename__ = "gallery_images"
+
+    id          = Column(String(36),  primary_key=True, index=True)   # UUID
+    filename    = Column(String(300), nullable=False)
+    job_name    = Column(String(200), nullable=False)
+    description = Column(Text,        nullable=True)
+    mime_type   = Column(String(100), nullable=False, default="image/jpeg")
+    data_uri    = Column(Text,        nullable=False)
+    uploaded_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<GalleryImage id={self.id} job={self.job_name!r}>"
+
+
+# ── Tenants (multi-tenant SaaS) ───────────────────────────────────────────────
+
+class Tenant(Base):
+    """
+    White-label tenant configuration for multi-tenant SaaS deployments.
+
+    Each Tenant has a unique tenant_id used as a partition key across all
+    other tables.  The default tenant ('default') represents the J. Worden
+    & Sons first-party deployment.
+    """
+
+    __tablename__ = "tenants"
+    __table_args__ = (UniqueConstraint("tenant_id", name="uq_tenants_tenant_id"),)
+
+    id                      = Column(Integer, primary_key=True, index=True)
+    tenant_id               = Column(String(60),   nullable=False, index=True)
+    company_name            = Column(String(200),  nullable=False)
+    system_prompt_override  = Column(Text,         nullable=True)
+    primary_color           = Column(String(20),   nullable=True, default="#f5a623")
+    logo_url                = Column(String(500),  nullable=True)
+    contact_email           = Column(String(254),  nullable=True)
+    contact_phone           = Column(String(30),   nullable=True)
+    is_active               = Column(Integer, nullable=False, default=1)
+    created_at              = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at              = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<Tenant tenant_id={self.tenant_id!r} company={self.company_name!r}>"
+
+
+# ── Real-time chat messages ───────────────────────────────────────────────────
+
+class ChatMessage(Base):
+    """
+    Individual message record for the real-time WebSocket chat system.
+
+    Messages are also stored in serialised form inside ChatSession.messages_json
+    for fast retrieval.  This table provides a normalised, queryable view of
+    every message — useful for admin dashboards, analytics, and audit trails.
+
+    role values: "customer" | "admin"
+    """
+
+    __tablename__ = "chat_messages"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    session_id   = Column(String(100), nullable=False, index=True)   # FK to chat_sessions.session_id
+    role         = Column(String(20),  nullable=False)               # customer | admin
+    sender_name  = Column(String(120), nullable=True)
+    content      = Column(Text,        nullable=False)
+    created_at   = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<ChatMessage id={self.id} session={self.session_id!r} role={self.role!r}>"
+
+
+# ── Email log ─────────────────────────────────────────────────────────────────
+
+class EmailLog(Base):
+    """
+    Audit log for every outgoing transactional email sent via SendGrid.
+
+    status values: "sent" | "failed"
+    """
+
+    __tablename__ = "email_logs"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    recipient_email = Column(String(254), nullable=False, index=True)
+    subject         = Column(String(500), nullable=False)
+    status          = Column(String(20),  nullable=False, default="sent")  # sent | failed
+    created_at      = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<EmailLog id={self.id} to={self.recipient_email!r} status={self.status!r}>"
+
+
+class AuditEvent(Base):
+    """
+    Generic immutable audit record for privileged actions and workflow changes.
+
+    Stores a compact summary plus optional JSON detail so operational events can
+    be reconstructed without coupling audit history to a single business model.
+    """
+
+    __tablename__ = "audit_events"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    event_type       = Column(String(80), nullable=False, index=True)
+    actor_type       = Column(String(40), nullable=False, default="system")
+    actor_id         = Column(String(120), nullable=True, index=True)
+    entity_type      = Column(String(80), nullable=True, index=True)
+    entity_id        = Column(String(120), nullable=True, index=True)
+    tenant_id        = Column(String(60), nullable=True, index=True, default="default")
+    summary          = Column(String(500), nullable=False)
+    detail_json      = Column(Text, nullable=True)
+    created_at       = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<AuditEvent id={self.id} type={self.event_type!r} entity={self.entity_type!r}:{self.entity_id!r}>"
+
+
+# ── Two-Factor Authentication ─────────────────────────────────────────────────
+
+class TwoFactorSecret(Base):
+    """
+    TOTP secret and backup codes for admin two-factor authentication.
+
+    One record per admin user_id.  The secret is a base32-encoded TOTP seed
+    compatible with RFC 6238 authenticator apps (Google Authenticator, Authy,
+    1Password, etc.).  backup_codes stores a JSON array of one-time recovery
+    codes; each code is removed from the array after use.
+
+    enabled=False means setup has been initiated but the first TOTP token has
+    not yet been verified — the secret is not enforced at login until enabled=True.
+    """
+
+    __tablename__ = "two_factor_secrets"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    user_id      = Column(String(60), nullable=False, unique=True, index=True)
+    secret       = Column(String(64), nullable=False)
+    backup_codes = Column(Text, nullable=True)   # JSON array of remaining one-time codes
+    enabled      = Column(Boolean, nullable=False, default=False)
+    created_at   = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<TwoFactorSecret user_id={self.user_id!r} enabled={self.enabled}>"
+
+
+# ── GC Cost Catalog + Project Estimates ───────────────────────────────────────
+
+class ProductItem(Base):
+    """
+    Material/labor price catalog for the General Contracting cost estimator.
+
+    Each item defines a unit cost (base_rate) and optional separate labor_rate.
+    The estimator multiplies quantity × (base_rate + labor_rate) × (1 + markup_pct)
+    to produce a line-item total.
+
+    Common units: sq_ft | linear_ft | ea | ton | cubic_yd | hour
+    Categories:   flooring | framing | roofing | concrete | asphalt |
+                  electrical | plumbing | mechanical | finishes | other
+    """
+
+    __tablename__ = "product_catalog"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    category    = Column(String(60),  nullable=False, index=True, default="other")
+    name        = Column(String(200), nullable=False)
+    unit        = Column(String(30),  nullable=False)   # sq_ft | linear_ft | ea | ton …
+    base_rate   = Column(Float,       nullable=False, default=0.0)   # $/unit material
+    labor_rate  = Column(Float,       nullable=False, default=0.0)   # $/unit labor
+    description = Column(String(300), nullable=True)
+    is_active   = Column(Boolean,     nullable=False, default=True)
+    tenant_id   = Column(String(60),  nullable=True, index=True, default="default")
+    created_at  = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at  = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<ProductItem id={self.id} name={self.name!r} unit={self.unit!r}>"
+
+
+class ProjectEstimate(Base):
+    """
+    Line-item cost estimate for a GC project.
+
+    Each row ties one ProductItem to a project site with a calculated quantity,
+    producing a total_cost.  A project can have many estimate lines.
+    Totaling all active lines for a project_site_id gives the project estimate.
+
+    The markup_pct column supports per-line profit margin control
+    (e.g. 0.20 = 20% markup over base+labor cost).
+    """
+
+    __tablename__ = "project_estimates"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    project_site_id  = Column(Integer, nullable=True, index=True)   # FK to project_sites (soft ref)
+    item_id          = Column(Integer, nullable=True, index=True)   # FK to product_catalog (soft ref)
+    item_name        = Column(String(200), nullable=True)           # Snapshot of name at estimate time
+    unit             = Column(String(30),  nullable=True)
+    quantity         = Column(Float, nullable=False, default=0.0)
+    base_rate        = Column(Float, nullable=False, default=0.0)   # Snapshot at estimate time
+    labor_rate       = Column(Float, nullable=False, default=0.0)
+    markup_pct       = Column(Float, nullable=False, default=0.15)  # Default 15% GC markup
+    total_cost       = Column(Float, nullable=False, default=0.0)   # Computed: qty×(base+labor)×(1+markup)
+    notes            = Column(String(300), nullable=True)
+    created_by       = Column(String(120), nullable=True)
+    tenant_id        = Column(String(60),  nullable=True, index=True, default="default")
+    created_at       = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at       = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<ProjectEstimate id={self.id} site_id={self.project_site_id} item={self.item_name!r} total=${self.total_cost:.2f}>"
+
+
+# ── Statewide Intelligence: SCC + VDOT ───────────────────────────────────────
+
+class SccVerificationLog(Base):
+    """
+    Immutable audit record for every Virginia SCC business entity check.
+
+    Fields:
+      entity_id        — SCC entity ID (e.g. "S1234567")
+      entity_name      — Registered legal name
+      entity_type      — LLC / Corporation / LP / etc.
+      status           — Active | Delinquent | Dissolved | Suspended | Unknown
+      is_good_standing — True when status == Active
+      registered_agent — Registered agent name (nullable)
+      principal_office — Principal office address (nullable)
+      date_formed      — Formation/registration date (nullable)
+      source           — "scc_api" | "stub"
+      requested_by     — User email or system that triggered the check
+      tenant_id        — Multi-tenant isolation key
+    """
+
+    __tablename__ = "scc_verification_logs"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    entity_id        = Column(String(60),  nullable=True,  index=True)
+    entity_name      = Column(String(200), nullable=True)
+    entity_type      = Column(String(80),  nullable=True)
+    status           = Column(String(40),  nullable=False, default="Unknown")
+    is_good_standing = Column(Boolean,     nullable=False, default=False)
+    registered_agent = Column(String(200), nullable=True)
+    principal_office = Column(String(300), nullable=True)
+    date_formed      = Column(String(20),  nullable=True)
+    source           = Column(String(30),  nullable=True)
+    requested_by     = Column(String(120), nullable=True)
+    tenant_id        = Column(String(60),  nullable=True, index=True, default="default")
+    checked_at       = Column(DateTime(timezone=True), default=_utcnow, nullable=False, index=True)
+    created_at       = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return (
+            f"<SccVerificationLog id={self.id} entity={self.entity_id!r} "
+            f"status={self.status!r} standing={self.is_good_standing}>"
+        )
+
+
+class VdotBid(Base):
+    """
+    VDOT bid board opportunity scraped daily from the Virginia DOT bid board.
+
+    Fields:
+      contract_id     — VDOT contract ID (e.g. "C000123456"), unique
+      title           — Project description / title
+      district        — VDOT district name (Bristol, Richmond, etc.)
+      county          — Primary county
+      category        — Bid category (Asphalt Surface Treatment, etc.)
+      contract_type   — Maintenance | Construction | Emergency | Minor
+      estimated_value — Engineer's estimate in USD (nullable)
+      open_date       — Date bid was advertised
+      close_date      — Bid letting/close date (nullable)
+      location_desc   — Freeform location description
+      prime_eligible  — True if open to prime contractors
+      is_active       — False when bid is closed/awarded
+      source          — "vdot_api" | "stub"
+      tenant_id       — Multi-tenant isolation key
+    """
+
+    __tablename__ = "vdot_bids"
+
+    id              = Column(Integer,  primary_key=True, index=True)
+    contract_id     = Column(String(30),  nullable=False, unique=True, index=True)
+    title           = Column(String(300), nullable=False)
+    district        = Column(String(60),  nullable=True, index=True)
+    county          = Column(String(80),  nullable=True, index=True)
+    category        = Column(String(100), nullable=True)
+    contract_type   = Column(String(30),  nullable=True)
+    estimated_value = Column(Float,       nullable=True)
+    open_date       = Column(DateTime(timezone=True), nullable=True)
+    close_date      = Column(DateTime(timezone=True), nullable=True, index=True)
+    location_desc   = Column(String(300), nullable=True)
+    prime_eligible  = Column(Boolean,     nullable=False, default=True)
+    is_active       = Column(Boolean,     nullable=False, default=True, index=True)
+    source          = Column(String(30),  nullable=True)
+    tenant_id       = Column(String(60),  nullable=True, index=True, default="default")
+    scraped_at      = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at      = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+    created_at      = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return (
+            f"<VdotBid id={self.id} contract={self.contract_id!r} "
+            f"district={self.district!r} value=${self.estimated_value}>"
+        )
+
+
+# ── Paving Site Evaluation ───────────────────────────────────────────────────
+
+class PavingEvaluation(Base):
+    """
+    Physical site assessment captured during the quoting workflow.
+
+    Records are created by field staff or via vision-AI photo inspection.
+    The ``damage_type`` drives quote pricing (alligator cracking triggers
+    the 1.4× base-rehab multiplier per VDOT 6-inch base standards).
+
+    Fields:
+      region          — Human-readable service area (e.g. "Richmond, VA")
+      calculated_sqft — Measured paving area in square feet
+      damage_type     — Condition code: alligator_cracking | surface_cracking
+                        | pothole | rutting | raveling | good
+      notes           — Free-text inspector / AI notes
+      tenant_id       — Multi-tenant isolation key
+    """
+
+    __tablename__ = "paving_evaluations"
+
+    id              = Column(Integer,              primary_key=True, index=True)
+    region          = Column(String(200),          nullable=False)
+    calculated_sqft = Column(Float,                nullable=False)
+    damage_type     = Column(String(60),           nullable=False, default="good")
+    notes           = Column(Text,                 nullable=True)
+    tenant_id       = Column(String(60),           nullable=True, index=True, default="default")
+    created_at      = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return (
+            f"<PavingEvaluation id={self.id} region={self.region!r} "
+            f"sqft={self.calculated_sqft} damage={self.damage_type!r}>"
+        )
+
+
+# ── Staff Portal (Ship I) ───────────────────────────────────────────────────
+
+STAFF_ROLES = {"field", "foreman", "admin"}
+
+
+class StaffUser(Base):
+    """Field / foreman / admin staff account for the staff portal."""
+
+    __tablename__ = "staff_users"
+    __table_args__ = (UniqueConstraint("username", name="uq_staff_username"),)
+
+    id            = Column(Integer, primary_key=True, index=True)
+    username      = Column(String(60), nullable=False, unique=True, index=True)
+    role          = Column(String(20), nullable=False, default="field")  # field|foreman|admin
+    password_hash = Column(String(256), nullable=False)
+    is_active     = Column(Boolean, default=True, nullable=False)
+    created_at    = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<StaffUser id={self.id} username={self.username!r} role={self.role!r}>"
+
+
+class DailyCheckIn(Base):
+    """Staff daily check-in with optional GPS and photo."""
+
+    __tablename__ = "daily_checkins"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    user_id        = Column(Integer, nullable=False, index=True)
+    note           = Column(Text, nullable=True)
+    photo_filename = Column(String(300), nullable=True)  # stored under STAFF_PHOTO_PATH
+    gps_lat        = Column(Float, nullable=True)
+    gps_lng        = Column(Float, nullable=True)
+    checked_in_at  = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<DailyCheckIn id={self.id} user_id={self.user_id} at={self.checked_in_at!r}>"
+
+
+# ── Worker Profiles & Compliance Documents (Ship I) ─────────────────────────
+
+WORKER_TYPES = {"employee_ft", "employee_pt", "employee_temp", "subcontractor", "general_labor", "cdl_driver"}
+WORKER_STATUS_VALUES = {"active", "inactive", "pending_docs", "terminated", "suspended"}
+CDL_CLASSES = {"A", "B", "C"}
+
+
+class WorkerProfile(Base):
+    """
+    Onboarding profile for any worker type (employee, sub, CDL driver, day labor).
+    Linked optionally to StaffUser if the worker has portal login access.
+    """
+
+    __tablename__ = "worker_profiles"
+    __table_args__ = (UniqueConstraint("staff_user_id", name="uq_worker_staff_user"),)
+
+    id              = Column(Integer, primary_key=True, index=True)
+    # Optional link to StaffUser (portal login)
+    staff_user_id   = Column(Integer, nullable=True, index=True)
+    full_name       = Column(String(200), nullable=False)
+    worker_type     = Column(String(30), nullable=False)   # WORKER_TYPES
+    pay_type        = Column(String(10), nullable=False, default="w2")   # w2 | 1099
+    status          = Column(String(20), nullable=False, default="pending_docs")
+    hire_date       = Column(DateTime(timezone=True), nullable=True)
+    termination_date = Column(DateTime(timezone=True), nullable=True)
+    phone           = Column(String(30), nullable=True)
+    email           = Column(String(254), nullable=True)
+    address         = Column(String(400), nullable=True)
+    ssn_last4       = Column(String(4), nullable=True)   # LAST 4 ONLY — never store full SSN
+    # CDL-specific fields
+    cdl_number      = Column(String(30), nullable=True)
+    cdl_state       = Column(String(2), nullable=True)
+    cdl_class       = Column(String(5), nullable=True)   # A | B | C
+    cdl_expiry      = Column(DateTime(timezone=True), nullable=True)
+    dot_medical_expiry = Column(DateTime(timezone=True), nullable=True)
+    fmcsa_clearinghouse_queried = Column(Boolean, default=False, nullable=False)
+    # Subcontractor-specific
+    company_name    = Column(String(200), nullable=True)
+    ein             = Column(String(20), nullable=True)
+    # Admin
+    notes           = Column(Text, nullable=True)
+    created_at      = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at      = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<WorkerProfile id={self.id} name={self.full_name!r} type={self.worker_type!r}>"
+
+
+class WorkerDocument(Base):
+    """
+    Compliance document uploaded for a WorkerProfile.
+    doc_type values defined in app/services/staff_compliance.DOC_LABELS.
+    status: pending | approved | rejected | expired
+    """
+
+    __tablename__ = "worker_documents"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    profile_id      = Column(Integer, nullable=False, index=True)
+    doc_type        = Column(String(60), nullable=False, index=True)
+    filename        = Column(String(300), nullable=True)   # stored under STAFF_DOCS_PATH
+    status          = Column(String(20), nullable=False, default="pending")  # pending|approved|rejected|expired
+    expiry_date     = Column(DateTime(timezone=True), nullable=True)
+    notes           = Column(String(500), nullable=True)
+    uploaded_at     = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    reviewed_at     = Column(DateTime(timezone=True), nullable=True)
+    reviewed_by     = Column(String(60), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<WorkerDocument id={self.id} profile={self.profile_id} type={self.doc_type!r} status={self.status!r}>"
+

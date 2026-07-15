@@ -1,172 +1,136 @@
-"""Gallery — job photo upload, list, delete. Local filesystem + S3."""
-from __future__ import annotations
+"""
+gallery.py — Job photo gallery for J. Worden & Sons.
 
-import mimetypes
-import os
+Endpoints:
+    POST   /api/v1/gallery/upload           → upload a job photo (admin only)
+  GET    /api/v1/gallery/images           → list all gallery images (public)
+  DELETE /api/v1/gallery/images/{image_id} → delete an image (admin only)
+
+Images are stored as base64 data URIs in the database so no external
+storage service is required.  Uploads are limited to 10 MB per file.
+"""
+
+import base64
+import logging
 import uuid
-from pathlib import Path
+from datetime import timezone
+from typing import Optional
 
-import boto3
-from botocore.exceptions import ClientError
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from ..config import settings
 from ..core.security import verify_premium_security
 from ..database import get_db
 from ..models import GalleryImage
 
-router = APIRouter(prefix='/gallery', tags=['gallery'])
+logger = logging.getLogger(__name__)
 
-ALLOWED_TYPES = {'image/jpeg', 'image/png', 'image/webp', 'image/gif'}
-MAX_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
+router = APIRouter(prefix="/api/v1/gallery", tags=["gallery"])
 
-
-def _s3_client():
-    if not settings.s3_bucket:
-        return None
-    return boto3.client(
-        's3',
-        region_name=settings.s3_region,
-        aws_access_key_id=settings.aws_access_key_id or None,
-        aws_secret_access_key=settings.aws_secret_access_key or None,
-    )
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+_ALLOWED_MIME_TYPES = {
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+}
 
 
-def _upload_to_s3(data: bytes, key: str, content_type: str) -> str:
-    client = _s3_client()
-    client.put_object(
-        Bucket=settings.s3_bucket,
-        Key=key,
-        Body=data,
-        ContentType=content_type,
-        ACL='public-read',
-    )
-    return f'https://{settings.s3_bucket}.s3.{settings.s3_region}.amazonaws.com/{key}'
+def _serialize_image(img: GalleryImage) -> dict:
+    return {
+        "id":          img.id,
+        "filename":    img.filename,
+        "job_name":    img.job_name,
+        "description": img.description,
+        "mime_type":   img.mime_type,
+        "url":         img.data_uri,
+        "uploaded_at": img.uploaded_at.isoformat() if img.uploaded_at else None,
+    }
 
 
-def _save_local(data: bytes, filename: str) -> str:
-    storage = Path(settings.gallery_storage_path)
-    storage.mkdir(parents=True, exist_ok=True)
-    dest = storage / filename
-    dest.write_bytes(data)
-    return str(dest)
+# ── Upload ────────────────────────────────────────────────────────────────────
 
-
-@router.post('/upload', dependencies=[Depends(verify_premium_security)])
-async def upload_photo(
+@router.post("/upload", summary="Upload a job photo")
+async def upload_image(
     file: UploadFile = File(...),
-    caption: str | None = Form(None),
-    project_type: str | None = Form(None),
-    city: str | None = Form(None),
-    state_code: str | None = Form(None),
-    is_before: bool | None = Form(None),
-    is_featured: bool = Form(False),
+    job_name: str = Form(...),
+    description: Optional[str] = Form(None),
     db: Session = Depends(get_db),
+    security: dict = Depends(verify_premium_security),
 ):
-    content_type = file.content_type or mimetypes.guess_type(file.filename or '')[0] or ''
-    if content_type not in ALLOWED_TYPES:
-        raise HTTPException(status_code=422, detail=f'File type not allowed: {content_type}')
+    """
+    Accept a multipart image upload and store it as a base64 data URI.
+    Requires a valid bearer token.
+    """
+    # Validate MIME type
+    mime = (file.content_type or "").lower()
+    if mime not in _ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{mime}'. Allowed: JPEG, PNG, WebP, GIF.",
+        )
 
+    # Read and size-check
     data = await file.read()
-    if len(data) > MAX_SIZE_BYTES:
-        raise HTTPException(status_code=413, detail='File exceeds 20 MB limit')
+    if len(data) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="File too large. Maximum upload size is 10 MB.",
+        )
 
-    ext = Path(file.filename or 'photo.jpg').suffix.lower() or '.jpg'
-    unique_name = f'{uuid.uuid4().hex}{ext}'
-    s3_key = f'gallery/{unique_name}'
+    # Encode to base64 data URI
+    b64 = base64.b64encode(data).decode("utf-8")
+    data_uri = f"data:{mime};base64,{b64}"
 
-    if settings.s3_bucket:
-        url = _upload_to_s3(data, s3_key, content_type)
-        storage_path = s3_key
-        storage_type = 's3'
-    else:
-        local_path = _save_local(data, unique_name)
-        url = f'/gallery/files/{unique_name}'
-        storage_path = local_path
-        storage_type = 'local'
-
-    img = GalleryImage(
-        filename=unique_name,
-        original_filename=file.filename,
-        storage_path=storage_path,
-        storage_type=storage_type,
-        url=url,
-        caption=caption,
-        project_type=project_type,
-        city=city,
-        state_code=state_code,
-        is_before=is_before,
-        is_featured=is_featured,
-        is_public=True,
+    image = GalleryImage(
+        id=str(uuid.uuid4()),
+        filename=file.filename or "upload.jpg",
+        job_name=job_name.strip(),
+        description=description.strip() if description else None,
+        mime_type=mime,
+        data_uri=data_uri,
     )
-    db.add(img)
+    db.add(image)
     db.commit()
-    db.refresh(img)
-    return {
-        'id': img.id,
-        'url': img.url,
-        'filename': img.filename,
-        'caption': img.caption,
-        'project_type': img.project_type,
-        'city': img.city,
-        'state_code': img.state_code,
-        'storage_type': img.storage_type,
-        'created_at': img.created_at.isoformat(),
-    }
+    db.refresh(image)
+
+    logger.info(
+        "Gallery upload: id=%s job=%r filename=%r by user=%s",
+        image.id,
+        image.job_name,
+        image.filename,
+        security.get("user"),
+    )
+    return {"status": "uploaded", "image": _serialize_image(image)}
 
 
-@router.get('/', dependencies=[Depends(verify_premium_security)])
-async def list_photos(
-    project_type: str | None = None,
-    state_code: str | None = None,
-    is_featured: bool | None = None,
-    is_public: bool | None = None,
-    limit: int = 100,
+# ── List ──────────────────────────────────────────────────────────────────────
+
+@router.get("/images", summary="List all gallery images")
+def list_images(db: Session = Depends(get_db)):
+    """Return all gallery images ordered newest-first."""
+    images = (
+        db.query(GalleryImage)
+        .order_by(GalleryImage.uploaded_at.desc())
+        .all()
+    )
+    return {"images": [_serialize_image(img) for img in images]}
+
+
+# ── Delete ────────────────────────────────────────────────────────────────────
+
+@router.delete("/images/{image_id}", summary="Delete a gallery image (admin only)")
+def delete_image(
+    image_id: str,
     db: Session = Depends(get_db),
+    security: dict = Depends(verify_premium_security),
 ):
-    q = db.query(GalleryImage)
-    if project_type:
-        q = q.filter(GalleryImage.project_type == project_type)
-    if state_code:
-        q = q.filter(GalleryImage.state_code == state_code.upper())
-    if is_featured is not None:
-        q = q.filter(GalleryImage.is_featured == is_featured)
-    if is_public is not None:
-        q = q.filter(GalleryImage.is_public == is_public)
-    images = q.order_by(GalleryImage.sort_order, GalleryImage.created_at.desc()).limit(limit).all()
-    return {
-        'images': [
-            {'id': i.id, 'url': i.url, 'filename': i.filename,
-             'caption': i.caption, 'project_type': i.project_type,
-             'city': i.city, 'state_code': i.state_code,
-             'is_before': i.is_before, 'is_featured': i.is_featured,
-             'created_at': i.created_at.isoformat()}
-            for i in images
-        ],
-        'total': len(images),
-    }
-
-
-@router.delete('/{image_id}', dependencies=[Depends(verify_premium_security)])
-async def delete_photo(image_id: int, db: Session = Depends(get_db)):
-    img = db.query(GalleryImage).filter(GalleryImage.id == image_id).first()
-    if not img:
-        raise HTTPException(status_code=404, detail='Image not found')
-
-    if img.storage_type == 's3' and img.storage_path:
-        try:
-            client = _s3_client()
-            if client:
-                client.delete_object(Bucket=settings.s3_bucket, Key=img.storage_path)
-        except ClientError:
-            pass
-    elif img.storage_type == 'local' and img.storage_path and os.path.exists(img.storage_path):
-        try:
-            os.remove(img.storage_path)
-        except OSError:
-            pass
-
-    db.delete(img)
+    """Delete a gallery image by ID. Requires a valid bearer token."""
+    image = db.query(GalleryImage).filter(GalleryImage.id == image_id).first()
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found.")
+    db.delete(image)
     db.commit()
-    return {'deleted': image_id}
+    logger.info("Gallery delete: id=%s by user=%s", image_id, security.get("user"))
+    return {"status": "deleted", "id": image_id}

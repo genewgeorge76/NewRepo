@@ -1,47 +1,59 @@
-"""Vector search — semantic blog search + knowledge base reindex."""
-from __future__ import annotations
+"""
+vector_search.py — Public semantic search endpoint for blog posts.
 
-from fastapi import APIRouter, BackgroundTasks, Depends
-from pydantic import BaseModel
-from sqlalchemy.orm import Session
+Endpoints:
+  GET /api/v1/search/semantic?q=sealcoating&limit=10
+      Returns blog posts semantically similar to the query string.
+      No authentication required — this is a public-facing search endpoint.
 
-from ..core.security import verify_premium_security
-from ..database import get_db
-from ..services.vector_search_service import (
-    search_semantic, reindex_all_blog_posts, get_index_status, delete_blog_post,
-)
+Semantic search uses OpenAI embeddings + Pinecone vector similarity so
+customers find relevant content even when they use different keywords than
+those in the post (e.g. searching "driveway repair" finds posts about
+"asphalt patching" and "pothole filling").
+"""
 
-router = APIRouter(prefix='/search', tags=['search'])
+import logging
 
+from fastapi import APIRouter, HTTPException, Query, Request
 
-class SearchRequest(BaseModel):
-    query: str
-    limit: int = 10
-    status_filter: str = 'published'
+from ..core.limiter import limiter
+from ..services.vector_search_service import vector_search_service
 
+logger = logging.getLogger(__name__)
 
-@router.post('/semantic')
-async def semantic_search(body: SearchRequest):
-    """Semantic search over indexed blog posts and knowledge base."""
-    results = search_semantic(body.query, body.limit, body.status_filter)
-    return {'query': body.query, 'results': results, 'count': len(results)}
+router = APIRouter(prefix="/api/v1/search", tags=["search"])
 
 
-@router.get('/status', dependencies=[Depends(verify_premium_security)])
-async def index_status():
-    """Return Pinecone index stats."""
-    return get_index_status()
+@router.get("/semantic", summary="Semantic search over blog posts")
+@limiter.limit("30/minute")
+def semantic_search(
+    request: Request,
+    q: str = Query(..., min_length=2, max_length=500, description="Search query"),
+    limit: int = Query(default=10, ge=1, le=50, description="Maximum results to return"),
+):
+    """
+    Search blog posts by semantic similarity.
 
+    Unlike keyword search, this finds posts that are *conceptually* related
+    to the query even if they don't share the same words.
 
-@router.post('/reindex', dependencies=[Depends(verify_premium_security)])
-async def reindex(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    """Trigger a full reindex of all published blog posts in the background."""
-    background_tasks.add_task(reindex_all_blog_posts, db)
-    return {'status': 'reindex_started', 'message': 'Full reindex running in background'}
+    **Examples**
+    - `q=driveway repair` → finds posts about patching, pothole filling, resurfacing
+    - `q=sealcoating benefits` → finds posts about driveway protection, longevity
+    - `q=how long does asphalt last` → finds posts about lifespan, maintenance
 
+    Results are ordered by descending similarity score (0–1).
+    Only published posts are returned.
+    """
+    query = q.strip()
+    if not query:
+        raise HTTPException(status_code=422, detail="Query 'q' must not be blank")
 
-@router.delete('/post/{post_id}', dependencies=[Depends(verify_premium_security)])
-async def remove_post_from_index(post_id: int):
-    """Remove a single post from the vector index."""
-    ok = delete_blog_post(post_id)
-    return {'post_id': post_id, 'removed': ok}
+    results = vector_search_service.search_semantic(query, limit=limit)
+
+    return {
+        "query":   query,
+        "limit":   limit,
+        "count":   len(results),
+        "results": results,
+    }

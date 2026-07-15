@@ -1,1 +1,1 @@
-# Celery task package
+"""Celery tasks package for JWordenAI."""

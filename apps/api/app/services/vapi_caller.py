@@ -1,44 +1,37 @@
 """
 vapi_caller.py — Vapi-backed outbound voice calls for Jarvis.
 
-Required env (set in Railway → Variables or Command Center → Integrations):
-  VAPI_API_KEY          — private key from dashboard.vapi.ai
-  VAPI_PHONE_NUMBER_ID  — the Vapi phone number SID to dial FROM
-  VAPI_ASSISTANT_ID     — default assistant (configured at dashboard.vapi.ai)
+Required env:
+  VAPI_API_KEY=vapi_xxxxxxxxxxxxxxxxxxxxxxxx           # private key from dashboard
+  VAPI_PHONE_NUMBER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxx    # the Vapi phone number SID to dial FROM
+  VAPI_ASSISTANT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxx       # default assistant to use (already configured at /public/vapi-assistant.json)
 
-Cost: ~$0.05/min + provider charges.
+Get keys at https://dashboard.vapi.ai/
+Cost: ~$0.05/min + your provider charges.
 
 Safety:
   - Honors the autonomy_state freeze (no calls when frozen).
-  - When master autonomy is OFF, only allows calls initiated from the
-    Command Center (caller passes confirmed=True).
+  - When master autonomy is OFF, only allows calls explicitly initiated from the Command Center
+    (caller passes confirmed=True). Background tasks must check master themselves.
   - All call attempts are logged.
 """
 from __future__ import annotations
-
-import logging
+import os
 import re
+import logging
 from typing import Any, Optional
 
-from . import autonomy_state
-from . import runtime_config as _cfg
+from app.services import autonomy_state
+from app.services import runtime_config as _cfg
 
 logger = logging.getLogger(__name__)
 
+def _vapi_key()         -> str: return _cfg.get("VAPI_API_KEY")
+def _vapi_phone_id()    -> str: return _cfg.get("VAPI_PHONE_NUMBER_ID")
+def _vapi_assistant_id()-> str: return _cfg.get("VAPI_ASSISTANT_ID")
 _VAPI_URL = "https://api.vapi.ai/call"
+
 _E164_RE = re.compile(r"^\+\d{8,15}$")
-
-
-def _vapi_key() -> str:
-    return _cfg.get("VAPI_API_KEY")
-
-
-def _vapi_phone_id() -> str:
-    return _cfg.get("VAPI_PHONE_NUMBER_ID")
-
-
-def _vapi_assistant_id() -> str:
-    return _cfg.get("VAPI_ASSISTANT_ID")
 
 
 def is_available() -> bool:
@@ -46,7 +39,7 @@ def is_available() -> bool:
 
 
 def _normalize_phone(raw: str) -> Optional[str]:
-    """Light E.164 normalization — assumes US (+1) when 10 digits given."""
+    """Light E.164 normalization — assumes US (+1) when 10 digits."""
     if not raw:
         return None
     digits = re.sub(r"[^\d+]", "", raw)
@@ -70,9 +63,9 @@ async def place_call(
     """
     Place an outbound call via Vapi. Returns {ok, call_id|error, ...}.
 
-    purpose:     human-readable label for logs ("Follow up on 123 Main St estimate")
-    script_hint: optional opening line passed as assistantOverrides.firstMessage
-    confirmed:   must be True for autonomous calls when master autonomy is OFF
+    purpose: human-readable label for logs ("Book reservation at Lemaire 7pm Friday for 2")
+    script_hint: optional line passed as assistant overrides.firstMessage
+    confirmed: must be True for autonomous calls when master is OFF
     """
     state = autonomy_state.get_state()
     if state.get("frozen"):
@@ -86,10 +79,7 @@ async def place_call(
                 ("VAPI_ASSISTANT_ID", _vapi_assistant_id()),
             ) if not val
         ]
-        return {
-            "ok": False,
-            "error": f"Vapi not configured. Missing: {', '.join(missing)} (set in Command Center → Integrations)",
-        }
+        return {"ok": False, "error": f"Vapi not configured. Missing: {', '.join(missing)} (set in Command Center → Integrations)"}
 
     e164 = _normalize_phone(to_number)
     if not e164:
@@ -98,18 +88,18 @@ async def place_call(
     if not state.get("master") and not confirmed:
         return {
             "ok": False,
-            "error": "Master autonomy OFF. Pass confirmed=True (operator action) to place a manual call.",
+            "error": "Master autonomy OFF and call not confirmed. Set confirmed=True (operator click) to override.",
         }
 
     try:
         import httpx  # type: ignore
     except ImportError:
-        return {"ok": False, "error": "httpx not installed — add to requirements.txt"}
+        return {"ok": False, "error": "httpx not installed"}
 
     payload: dict[str, Any] = {
-        "assistantId":   (assistant_id or _vapi_assistant_id()),
-        "phoneNumberId": _vapi_phone_id(),
-        "customer":      {"number": e164},
+        "assistantId":    (assistant_id or _vapi_assistant_id()),
+        "phoneNumberId":  _vapi_phone_id(),
+        "customer":       {"number": e164},
     }
     if script_hint:
         payload["assistantOverrides"] = {
@@ -126,7 +116,7 @@ async def place_call(
         async with httpx.AsyncClient(timeout=20.0) as client:
             r = await client.post(_VAPI_URL, json=payload, headers=headers)
         if r.status_code not in (200, 201):
-            logger.warning("[VAPI] non-200: %s %s", r.status_code, r.text[:300])
+            logger.warning("[VAPI] call non-200: %s %s", r.status_code, r.text[:300])
             return {"ok": False, "error": f"vapi http {r.status_code}", "detail": r.text[:300]}
         data = r.json()
         call_id = data.get("id") or data.get("callId")

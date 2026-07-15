@@ -1,255 +1,300 @@
 """
-anomaly_detector.py — Z-score business metrics monitoring.
+anomaly_detector.py — Continuous anomaly detection for JWordenAI business metrics.
 
-Checks 4 metrics on a 7-day rolling window:
-  1. lead_velocity   — daily new leads vs 7d baseline
-  2. proposal_rate   — fraction of leads with proposals vs 7d average
-  3. conversion_rate — closed-won / total-received vs 7d average
-  4. revenue_pace    — estimated_value of won leads vs 7d average
+Monitors rolling-window statistics for hidden correlations and irregularities,
+identifying business shifts faster than human review.
 
-Individual check failures are caught and logged so one bad query never
-blocks the rest. Anomalies persist to AnomalyAlert with a 2-hour dedup
-window (no duplicate per metric_name within 2 hours).
+Metrics monitored:
+  lead_volume_24h    — today's leads vs 7-day rolling average
+  hot_lead_rate      — HOT% vs expected 20-40% band
+  cool_lead_surge    — sudden spike in COOL leads (bad ad targeting signal)
+  zero_lead_gap      — no leads in a 6-hour business-hours window
+
+Algorithm:
+  Z-score on 7-day daily rolling window.
+  |z| ≥ 3.0 → CRITICAL  |z| ≥ 2.5 → HIGH  |z| ≥ 1.8 → MEDIUM  |z| ≥ 1.2 → LOW
+
+No heavy ML dependencies — pure Python + SQLAlchemy.
 """
+
 from __future__ import annotations
 
 import logging
-import statistics
+import math
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
-
-from ..models import AnomalyAlert, Lead
 
 logger = logging.getLogger(__name__)
 
-WINDOW_DAYS = 7
-Z_CRITICAL = 2.5
-Z_HIGH = 2.0
-Z_MEDIUM = 1.5
-DEDUP_HOURS = 2
-TENANT = "default"
+Severity = str  # "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" | "NORMAL"
 
 
 class AnomalyResult(NamedTuple):
-    metric_name: str
-    current_value: float
+    metric_name:    str
+    current_value:  float
     baseline_value: float
-    z_score: float
-    severity: str       # CRITICAL | HIGH | MEDIUM | INFO
-    message: str
-    is_anomaly: bool
+    z_score:        float
+    severity:       Severity
+    message:        str
 
 
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+# ── Statistics helpers ────────────────────────────────────────────────────────
+
+def _stdev(values: list[float]) -> float:
+    if len(values) < 2:
+        return 0.0
+    mean = sum(values) / len(values)
+    variance = sum((v - mean) ** 2 for v in values) / len(values)
+    return math.sqrt(variance)
 
 
-def _severity(z: float) -> str:
+def _zscore(current: float, baseline: float, std: float) -> float:
+    return (current - baseline) / std if std > 0 else 0.0
+
+
+def _severity(z: float) -> Severity:
     az = abs(z)
-    if az >= Z_CRITICAL:
+    if az >= 3.0:
         return "CRITICAL"
-    if az >= Z_HIGH:
+    if az >= 2.5:
         return "HIGH"
-    if az >= Z_MEDIUM:
+    if az >= 1.8:
         return "MEDIUM"
-    return "INFO"
+    if az >= 1.2:
+        return "LOW"
+    return "NORMAL"
 
 
-def _z_score(sample: list[float], current: float) -> float:
-    if len(sample) < 2:
-        return 0.0
-    try:
-        mean = statistics.mean(sample)
-        stdev = statistics.stdev(sample)
-        if stdev < 1e-9:
-            return 0.0
-        return (current - mean) / stdev
-    except Exception:
-        return 0.0
+# ── Individual checks ─────────────────────────────────────────────────────────
 
+def check_lead_volume(db: Session) -> AnomalyResult | None:
+    """Detect abnormal daily lead volume vs 7-day rolling average."""
+    from ..models import Lead  # noqa: PLC0415
 
-def _check_lead_velocity(db: Session) -> AnomalyResult:
-    now = _utcnow()
-    counts: list[float] = []
-    for days_back in range(1, WINDOW_DAYS + 1):
-        day_start = now - timedelta(days=days_back)
-        day_end = day_start + timedelta(days=1)
-        count = (
-            db.query(Lead)
-            .filter(Lead.tenant_id == TENANT)
-            .filter(Lead.created_at >= day_start, Lead.created_at < day_end)
-            .count()
-        )
-        counts.append(float(count))
-
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today = datetime.now(timezone.utc).date()
     today_count = float(
-        db.query(Lead)
-        .filter(Lead.tenant_id == TENANT)
-        .filter(Lead.created_at >= today_start)
-        .count()
+        db.query(func.count(Lead.id))
+        .filter(func.date(Lead.created_at) == today, Lead.tenant_id == "default")
+        .scalar() or 0
     )
-    baseline = statistics.mean(counts) if counts else 0.0
-    z = _z_score(counts, today_count)
+
+    history = [
+        float(
+            db.query(func.count(Lead.id))
+            .filter(
+                func.date(Lead.created_at) == (today - timedelta(days=d)),
+                Lead.tenant_id == "default",
+            )
+            .scalar() or 0
+        )
+        for d in range(1, 8)
+    ]
+
+    if not history:
+        return None
+
+    baseline = sum(history) / len(history)
+    std = _stdev(history)
+    z = _zscore(today_count, baseline, std)
+    sev = _severity(z)
+
+    if sev == "NORMAL":
+        return None
+
+    direction = "spike" if z > 0 else "drop"
+    advice = (
+        "Possible downtime or ad campaign pause — check site uptime and campaign status immediately."
+        if z < -2.0
+        else "Traffic surge detected — verify lead quality before scaling budget further."
+    )
     return AnomalyResult(
-        metric_name="lead_velocity",
+        metric_name="lead_volume_24h",
         current_value=today_count,
         baseline_value=round(baseline, 2),
-        z_score=round(z, 3),
-        severity=_severity(z),
-        message=f"Today: {today_count:.0f} leads (baseline {baseline:.1f}/day, z={z:.2f})",
-        is_anomaly=abs(z) >= Z_MEDIUM,
+        z_score=round(z, 2),
+        severity=sev,
+        message=f"Lead volume {direction}: {int(today_count)} today vs {baseline:.1f} daily average (z={z:+.2f}). {advice}",
     )
 
 
-def _check_proposal_rate(db: Session) -> AnomalyResult:
-    now = _utcnow()
-    daily_rates: list[float] = []
-    for days_back in range(1, WINDOW_DAYS + 1):
-        day_start = now - timedelta(days=days_back)
-        day_end = day_start + timedelta(days=1)
-        base = db.query(Lead).filter(Lead.tenant_id == TENANT).filter(
-            Lead.created_at >= day_start, Lead.created_at < day_end
+def check_hot_lead_rate(db: Session) -> AnomalyResult | None:
+    """Alert when HOT lead % falls outside the expected 20-40% band."""
+    from ..models import Lead  # noqa: PLC0415
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    total = db.query(func.count(Lead.id)).filter(
+        Lead.created_at >= cutoff, Lead.tenant_id == "default"
+    ).scalar() or 0
+
+    if total < 5:
+        return None
+
+    hot = db.query(func.count(Lead.id)).filter(
+        Lead.created_at >= cutoff,
+        Lead.score_label == "HOT",
+        Lead.tenant_id == "default",
+    ).scalar() or 0
+
+    rate = hot / total
+    expected = 0.28   # midpoint of 20-40% historical band
+    std = 0.08
+
+    z = _zscore(rate, expected, std)
+    sev = _severity(z)
+    if sev == "NORMAL":
+        return None
+
+    if rate < 0.15:
+        msg = (
+            f"HOT lead rate critically low ({rate:.0%} of last-7-day leads). "
+            "AI Max may be driving high volume but low-intent traffic — "
+            "review URL expansion targets and tighten exclusion list."
         )
-        total = base.count()
-        with_prop = base.filter(Lead.proposal_sent_at.isnot(None)).count()
-        daily_rates.append(float(with_prop) / max(float(total), 1))
-
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    today_base = db.query(Lead).filter(Lead.tenant_id == TENANT).filter(Lead.created_at >= today_start)
-    total_today = today_base.count()
-    prop_today = today_base.filter(Lead.proposal_sent_at.isnot(None)).count()
-    current_rate = float(prop_today) / max(float(total_today), 1)
-
-    baseline = statistics.mean(daily_rates) if daily_rates else 0.0
-    z = _z_score(daily_rates, current_rate)
-    return AnomalyResult(
-        metric_name="proposal_rate",
-        current_value=round(current_rate, 3),
-        baseline_value=round(baseline, 3),
-        z_score=round(z, 3),
-        severity=_severity(z),
-        message=f"Proposal rate today: {current_rate:.1%} (baseline {baseline:.1%}, z={z:.2f})",
-        is_anomaly=abs(z) >= Z_MEDIUM,
-    )
-
-
-def _check_conversion_rate(db: Session) -> AnomalyResult:
-    now = _utcnow()
-    daily_rates: list[float] = []
-    for days_back in range(1, WINDOW_DAYS + 1):
-        day_start = now - timedelta(days=days_back)
-        day_end = day_start + timedelta(days=1)
-        base = db.query(Lead).filter(Lead.tenant_id == TENANT).filter(
-            Lead.created_at >= day_start, Lead.created_at < day_end
+        sev = "HIGH"
+    elif rate > 0.55:
+        msg = (
+            f"HOT lead rate unusually high ({rate:.0%}). "
+            "Validate scoring model thresholds — possible miscalibration."
         )
-        total = base.count()
-        won = base.filter(Lead.status == "won").count()
-        daily_rates.append(float(won) / max(float(total), 1))
+    else:
+        msg = f"HOT lead rate ({rate:.0%}) outside normal 20-40% band (z={z:+.2f})."
 
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    today_base = db.query(Lead).filter(Lead.tenant_id == TENANT).filter(Lead.created_at >= today_start)
-    total_today = today_base.count()
-    won_today = today_base.filter(Lead.status == "won").count()
-    current_rate = float(won_today) / max(float(total_today), 1)
-
-    baseline = statistics.mean(daily_rates) if daily_rates else 0.0
-    z = _z_score(daily_rates, current_rate)
     return AnomalyResult(
-        metric_name="conversion_rate",
-        current_value=round(current_rate, 3),
-        baseline_value=round(baseline, 3),
-        z_score=round(z, 3),
-        severity=_severity(z),
-        message=f"Conversion today: {current_rate:.1%} (baseline {baseline:.1%}, z={z:.2f})",
-        is_anomaly=abs(z) >= Z_MEDIUM,
+        metric_name="hot_lead_rate",
+        current_value=round(rate, 4),
+        baseline_value=expected,
+        z_score=round(z, 2),
+        severity=sev,
+        message=msg,
     )
 
 
-def _check_revenue_pace(db: Session) -> AnomalyResult:
-    now = _utcnow()
-    daily_rev: list[float] = []
-    for days_back in range(1, WINDOW_DAYS + 1):
-        day_start = now - timedelta(days=days_back)
-        day_end = day_start + timedelta(days=1)
-        rows = (
-            db.query(Lead.estimated_value)
-            .filter(Lead.tenant_id == TENANT)
-            .filter(Lead.created_at >= day_start, Lead.created_at < day_end)
-            .filter(Lead.status == "won")
-            .all()
-        )
-        daily_rev.append(sum(r[0] or 0.0 for r in rows))
+def check_cool_surge(db: Session) -> AnomalyResult | None:
+    """Detect sudden spike in COOL leads — signals bad AI Max ad targeting."""
+    from ..models import Lead  # noqa: PLC0415
 
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    rows_today = (
-        db.query(Lead.estimated_value)
-        .filter(Lead.tenant_id == TENANT)
-        .filter(Lead.created_at >= today_start)
-        .filter(Lead.status == "won")
-        .all()
-    )
-    today_rev = sum(r[0] or 0.0 for r in rows_today)
+    today = datetime.now(timezone.utc).date()
 
-    baseline = statistics.mean(daily_rev) if daily_rev else 0.0
-    z = _z_score(daily_rev, today_rev)
+    def _cool_rate_for_day(d) -> float:
+        t = db.query(func.count(Lead.id)).filter(func.date(Lead.created_at) == d).scalar() or 0
+        if t == 0:
+            return 0.0
+        c = db.query(func.count(Lead.id)).filter(
+            func.date(Lead.created_at) == d, Lead.score_label == "COOL"
+        ).scalar() or 0
+        return c / t
+
+    today_cool = _cool_rate_for_day(today)
+    prior_rates = [_cool_rate_for_day(today - timedelta(days=i)) for i in range(2, 8)]
+    baseline = sum(prior_rates) / len(prior_rates) if prior_rates else 0.30
+    std = _stdev(prior_rates) or 0.10
+
+    z = _zscore(today_cool, baseline, std)
+    sev = _severity(z)
+
+    if sev == "NORMAL" or today_cool < 0.40:
+        return None
+
     return AnomalyResult(
-        metric_name="revenue_pace",
-        current_value=round(today_rev, 2),
-        baseline_value=round(baseline, 2),
-        z_score=round(z, 3),
-        severity=_severity(z),
-        message=f"Won revenue today: ${today_rev:,.0f} (baseline ${baseline:,.0f}/day, z={z:.2f})",
-        is_anomaly=abs(z) >= Z_MEDIUM,
+        metric_name="cool_lead_surge",
+        current_value=round(today_cool, 4),
+        baseline_value=round(baseline, 4),
+        z_score=round(z, 2),
+        severity=sev,
+        message=(
+            f"COOL lead surge: {today_cool:.0%} of today's leads are low-intent "
+            f"(6-day baseline {baseline:.0%}, z={z:+.2f}). "
+            "Review AI Max URL expansion — consider tightening exclusion list or "
+            "switching broad-match ad groups to phrase match."
+        ),
     )
 
 
-_CHECKS = (
-    _check_lead_velocity,
-    _check_proposal_rate,
-    _check_conversion_rate,
-    _check_revenue_pace,
-)
+def check_zero_lead_gap(db: Session) -> AnomalyResult | None:
+    """Alert when no leads arrive in a 6-hour window during business hours."""
+    from ..models import Lead  # noqa: PLC0415
 
+    now = datetime.now(timezone.utc)
+    # Only trigger Mon-Fri 09:00-22:00 UTC (approximately 05:00-18:00 ET)
+    if now.weekday() >= 5 or not (9 <= now.hour <= 22):
+        return None
+
+    cutoff = now - timedelta(hours=6)
+    recent = db.query(func.count(Lead.id)).filter(
+        Lead.created_at >= cutoff, Lead.tenant_id == "default"
+    ).scalar() or 0
+
+    if recent > 0:
+        return None
+
+    return AnomalyResult(
+        metric_name="zero_lead_gap",
+        current_value=0.0,
+        baseline_value=1.0,
+        z_score=-3.5,
+        severity="CRITICAL",
+        message=(
+            "Zero leads in the last 6 hours during business hours. "
+            "Possible causes: site is down, quote form endpoint error, "
+            "all campaigns paused, or Netlify function failure. "
+            "Check site uptime and form endpoint immediately."
+        ),
+    )
+
+
+# ── Orchestrator ──────────────────────────────────────────────────────────────
 
 def run_all_checks(db: Session) -> list[AnomalyResult]:
-    """Run all 4 anomaly checks. Individual failures are logged and skipped."""
+    """Run all anomaly checks. Returns list of detected anomalies (excludes NORMAL)."""
     results: list[AnomalyResult] = []
-    for check in _CHECKS:
+    for check in (check_lead_volume, check_hot_lead_rate, check_cool_surge, check_zero_lead_gap):
         try:
-            results.append(check(db))
-        except Exception as exc:
+            result = check(db)
+            if result is not None:
+                results.append(result)
+        except Exception as exc:  # noqa: BLE001
             logger.error("Anomaly check %s failed: %s", check.__name__, exc)
     return results
 
 
 def persist_anomalies(db: Session, results: list[AnomalyResult]) -> int:
-    """Persist anomalous results with 2-hour dedup. Returns count of new rows inserted."""
-    saved = 0
-    cutoff = _utcnow() - timedelta(hours=DEDUP_HOURS)
+    """
+    Persist new anomaly results to anomaly_alerts table.
+    Deduplicates: skips metrics already alerted within the last 2 hours.
+    Returns count of new rows written.
+    """
+    if not results:
+        return 0
+
+    from ..models import AnomalyAlert  # noqa: PLC0415
+
+    now = datetime.now(timezone.utc)
+    recent_names: set[str] = {
+        row.metric_name
+        for row in db.query(AnomalyAlert.metric_name).filter(
+            AnomalyAlert.detected_at >= now - timedelta(hours=2),
+            AnomalyAlert.resolved_at == None,  # noqa: E711
+        ).all()
+    }
+
+    written = 0
     for r in results:
-        if not r.is_anomaly:
+        if r.metric_name in recent_names:
             continue
-        exists = (
-            db.query(AnomalyAlert)
-            .filter(AnomalyAlert.metric_name == r.metric_name)
-            .filter(AnomalyAlert.detected_at >= cutoff)
-            .first()
-        )
-        if exists:
-            continue
-        alert = AnomalyAlert(
+        db.add(AnomalyAlert(
             metric_name=r.metric_name,
             current_value=r.current_value,
             baseline_value=r.baseline_value,
             z_score=r.z_score,
             severity=r.severity,
             message=r.message,
-        )
-        db.add(alert)
-        saved += 1
-    if saved:
+            detected_at=now,
+        ))
+        written += 1
+
+    if written:
         db.commit()
-    return saved
+    return written

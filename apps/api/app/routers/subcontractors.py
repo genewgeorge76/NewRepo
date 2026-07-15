@@ -1,208 +1,315 @@
-"""Subcontractors — sub directory, performance reviews, expiry alerts."""
-from __future__ import annotations
+"""
+subcontractors.py — Subcontractor roster and compliance management for JWordenAI.
 
-import uuid
-from datetime import datetime, timedelta, timezone
+Routes:
+  GET    /api/v1/subcontractors           — list subcontractors
+  POST   /api/v1/subcontractors           — add subcontractor
+  PUT    /api/v1/subcontractors/{id}      — update subcontractor
+  DELETE /api/v1/subcontractors/{id}      — deactivate subcontractor
+  GET    /api/v1/subcontractors/expiring  — get expiring certifications
 
-from fastapi import APIRouter, Depends, HTTPException
+Requires premium security.
+"""
+
+import logging
+from datetime import datetime, timezone
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from ..core.limiter import limiter
 from ..core.security import verify_premium_security
 from ..database import get_db
-from ..models import SubcontractorRoster, SubcontractorPerformance
+from ..models import SubcontractorPerformance, SubcontractorRoster
+from ..services.subcontractor_monitor import get_compliance_summary, get_expiring_certs
 
-router = APIRouter(prefix='/subcontractors', tags=['subcontractors'])
+logger = logging.getLogger(__name__)
 
-
-class SubCreate(BaseModel):
-    company_name: str
-    contact_name: str | None = None
-    email: str | None = None
-    phone: str | None = None
-    trade_specialty: str | None = None
-    states_licensed: list[str] | None = None
-    license_number: str | None = None
-    license_expiry: str | None = None
-    insurance_expiry: str | None = None
-    insurance_limit: float | None = None
-    bonded: bool = False
-    notes: str | None = None
+router = APIRouter(prefix="/api/v1/subcontractors", tags=["subcontractors"])
 
 
-class SubUpdate(BaseModel):
-    company_name: str | None = None
-    contact_name: str | None = None
-    email: str | None = None
-    phone: str | None = None
-    trade_specialty: str | None = None
-    states_licensed: list[str] | None = None
-    status: str | None = None
-    license_number: str | None = None
-    license_expiry: str | None = None
-    insurance_expiry: str | None = None
-    insurance_limit: float | None = None
-    bonded: bool | None = None
-    notes: str | None = None
-
-
-class PerformanceReview(BaseModel):
-    job_id: str | None = None
-    job_date: str | None = None
-    quality_score: int      # 1–5
-    schedule_score: int
-    communication_score: int
-    would_rehire: bool
-    notes: str | None = None
-
-
-def _parse_dt(s: str | None) -> datetime | None:
+def _parse_dt(s: Optional[str]) -> Optional[datetime]:
     if not s:
         return None
     try:
-        return datetime.fromisoformat(s.replace('Z', '+00:00'))
-    except ValueError:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+    except Exception:  # noqa: BLE001
         return None
 
 
-def _serialize(s: SubcontractorRoster) -> dict:
+class SubcontractorCreate(BaseModel):
+    name: str
+    company: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    state_code: str
+    license_number: Optional[str] = None
+    license_expiry: Optional[str] = None   # ISO date string
+    insurance_expiry: Optional[str] = None
+    bond_expiry: Optional[str] = None
+    bond_amount: Optional[float] = None
+    insurance_carrier: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class SubcontractorUpdate(SubcontractorCreate):
+    name: Optional[str] = None
+    company: Optional[str] = None
+    state_code: Optional[str] = None
+
+
+def _parse_dt(s: Optional[str]) -> Optional[datetime]:
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _sub_to_dict(s: SubcontractorRoster) -> dict:
     return {
-        'id': s.id,
-        'company_name': s.company_name,
-        'contact_name': s.contact_name,
-        'email': s.email,
-        'phone': s.phone,
-        'trade_specialty': s.trade_specialty,
-        'states_licensed': s.states_licensed.split(',') if s.states_licensed else [],
-        'license_number': s.license_number,
-        'license_expiry': s.license_expiry.isoformat() if s.license_expiry else None,
-        'insurance_expiry': s.insurance_expiry.isoformat() if s.insurance_expiry else None,
-        'insurance_limit': s.insurance_limit,
-        'bonded': s.bonded,
-        'status': s.status,
-        'rating': s.rating,
-        'notes': s.notes,
-        'created_at': s.created_at.isoformat(),
+        "id": s.id,
+        "name": s.name,
+        "company": s.company,
+        "email": s.email,
+        "phone": s.phone,
+        "state_code": s.state_code,
+        "license_number": s.license_number,
+        "license_expiry": s.license_expiry.isoformat() if s.license_expiry else None,
+        "insurance_expiry": s.insurance_expiry.isoformat() if s.insurance_expiry else None,
+        "bond_expiry": s.bond_expiry.isoformat() if s.bond_expiry else None,
+        "bond_amount": s.bond_amount,
+        "insurance_carrier": s.insurance_carrier,
+        "is_active": s.is_active,
+        "notes": s.notes,
+        "created_at": s.created_at.isoformat(),
     }
 
 
-@router.post('/', dependencies=[Depends(verify_premium_security)])
-async def create_sub(body: SubCreate, db: Session = Depends(get_db)):
+@router.get("", summary="List subcontractors")
+@limiter.limit("60/minute")
+async def list_subcontractors(
+    request: Request,
+    is_active: Optional[int] = Query(default=1),
+    state_code: Optional[str] = Query(default=None, max_length=2),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
+):
+    q = db.query(SubcontractorRoster)
+    if is_active is not None:
+        q = q.filter(SubcontractorRoster.is_active == is_active)
+    if state_code:
+        q = q.filter(SubcontractorRoster.state_code == state_code.upper())
+
+    total = q.count()
+    subs = q.order_by(SubcontractorRoster.name.asc()).offset(offset).limit(limit).all()
+    return {
+        "total": total,
+        "subcontractors": [_sub_to_dict(s) for s in subs],
+        "compliance_summary": get_compliance_summary(db),
+    }
+
+
+@router.post("", summary="Add a subcontractor")
+@limiter.limit("30/minute")
+async def create_subcontractor(
+    request: Request,
+    req: SubcontractorCreate,
+    db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
+):
     sub = SubcontractorRoster(
-        id=str(uuid.uuid4()),
-        company_name=body.company_name,
-        contact_name=body.contact_name,
-        email=body.email,
-        phone=body.phone,
-        trade_specialty=body.trade_specialty,
-        states_licensed=','.join(body.states_licensed) if body.states_licensed else None,
-        license_number=body.license_number,
-        license_expiry=_parse_dt(body.license_expiry),
-        insurance_expiry=_parse_dt(body.insurance_expiry),
-        insurance_limit=body.insurance_limit,
-        bonded=body.bonded,
-        notes=body.notes,
+        name=req.name,
+        company=req.company,
+        email=req.email,
+        phone=req.phone,
+        state_code=req.state_code.upper(),
+        license_number=req.license_number,
+        license_expiry=_parse_dt(req.license_expiry),
+        insurance_expiry=_parse_dt(req.insurance_expiry),
+        bond_expiry=_parse_dt(req.bond_expiry),
+        bond_amount=req.bond_amount,
+        insurance_carrier=req.insurance_carrier,
+        notes=req.notes,
+        is_active=1,
     )
     db.add(sub)
     db.commit()
     db.refresh(sub)
-    return _serialize(sub)
+    return {"status": "created", **_sub_to_dict(sub)}
 
 
-@router.get('/', dependencies=[Depends(verify_premium_security)])
-async def list_subs(
-    status: str | None = None,
-    trade: str | None = None,
-    state: str | None = None,
+@router.put("/{sub_id}", summary="Update a subcontractor")
+@limiter.limit("30/minute")
+async def update_subcontractor(
+    request: Request,
+    sub_id: int,
+    req: SubcontractorUpdate,
     db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
 ):
-    q = db.query(SubcontractorRoster)
-    if status:
-        q = q.filter(SubcontractorRoster.status == status)
-    if trade:
-        q = q.filter(SubcontractorRoster.trade_specialty.ilike(f'%{trade}%'))
-    if state:
-        q = q.filter(SubcontractorRoster.states_licensed.contains(state))
-    subs = q.order_by(SubcontractorRoster.company_name).all()
-    return {'subcontractors': [_serialize(s) for s in subs], 'total': len(subs)}
+    sub = db.get(SubcontractorRoster, sub_id)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subcontractor not found")
 
-
-@router.get('/expiring', dependencies=[Depends(verify_premium_security)])
-async def expiring_compliance(days: int = 30, db: Session = Depends(get_db)):
-    cutoff = datetime.now(timezone.utc) + timedelta(days=days)
-    alerts = []
-    subs = db.query(SubcontractorRoster).filter(SubcontractorRoster.status == 'active').all()
-    for s in subs:
-        if s.license_expiry and s.license_expiry <= cutoff:
-            alerts.append({'sub_id': s.id, 'company': s.company_name, 'issue': 'License expiring', 'expiry': s.license_expiry.isoformat()})
-        if s.insurance_expiry and s.insurance_expiry <= cutoff:
-            alerts.append({'sub_id': s.id, 'company': s.company_name, 'issue': 'Insurance expiring', 'expiry': s.insurance_expiry.isoformat()})
-    alerts.sort(key=lambda x: x['expiry'])
-    return {'alerts': alerts, 'count': len(alerts)}
-
-
-@router.get('/{sub_id}', dependencies=[Depends(verify_premium_security)])
-async def get_sub(sub_id: str, db: Session = Depends(get_db)):
-    s = db.query(SubcontractorRoster).filter(SubcontractorRoster.id == sub_id).first()
-    if not s:
-        raise HTTPException(status_code=404, detail='Subcontractor not found')
-    reviews = db.query(SubcontractorPerformance).filter(SubcontractorPerformance.sub_id == sub_id).all()
-    result = _serialize(s)
-    result['performance_reviews'] = [
-        {'id': r.id, 'job_date': r.job_date.isoformat() if r.job_date else None,
-         'quality': r.quality_score, 'schedule': r.schedule_score,
-         'communication': r.communication_score, 'would_rehire': r.would_rehire, 'notes': r.notes}
-        for r in reviews
-    ]
-    return result
-
-
-@router.patch('/{sub_id}', dependencies=[Depends(verify_premium_security)])
-async def update_sub(sub_id: str, body: SubUpdate, db: Session = Depends(get_db)):
-    s = db.query(SubcontractorRoster).filter(SubcontractorRoster.id == sub_id).first()
-    if not s:
-        raise HTTPException(status_code=404, detail='Subcontractor not found')
-    for field, val in body.model_dump(exclude_none=True).items():
-        if field == 'states_licensed' and isinstance(val, list):
-            setattr(s, field, ','.join(val))
+    update_data = req.model_dump(exclude_none=True)
+    for key, val in update_data.items():
+        if key in ("license_expiry", "insurance_expiry", "bond_expiry"):
+            setattr(sub, key, _parse_dt(val))
+        elif key == "state_code" and val:
+            sub.state_code = val.upper()
         else:
-            if hasattr(s, field):
-                setattr(s, field, _parse_dt(val) if field.endswith('_expiry') and val else val)
+            setattr(sub, key, val)
+
+    sub.updated_at = datetime.now(timezone.utc)
     db.commit()
-    db.refresh(s)
-    return _serialize(s)
+    db.refresh(sub)
+    return {"status": "updated", **_sub_to_dict(sub)}
 
 
-@router.post('/{sub_id}/performance', dependencies=[Depends(verify_premium_security)])
-async def add_review(sub_id: str, body: PerformanceReview, db: Session = Depends(get_db)):
-    s = db.query(SubcontractorRoster).filter(SubcontractorRoster.id == sub_id).first()
-    if not s:
-        raise HTTPException(status_code=404, detail='Subcontractor not found')
-    rev = SubcontractorPerformance(
-        sub_id=sub_id,
-        job_id=body.job_id,
-        job_date=_parse_dt(body.job_date),
-        quality_score=body.quality_score,
-        schedule_score=body.schedule_score,
-        communication_score=body.communication_score,
-        would_rehire=body.would_rehire,
-        notes=body.notes,
+@router.delete("/{sub_id}", summary="Deactivate a subcontractor")
+@limiter.limit("30/minute")
+async def deactivate_subcontractor(
+    request: Request,
+    sub_id: int,
+    db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
+):
+    sub = db.get(SubcontractorRoster, sub_id)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subcontractor not found")
+
+    sub.is_active = 0
+    sub.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"status": "deactivated", "id": sub_id}
+
+
+@router.get("/expiring", summary="Get subcontractors with expiring certifications")
+@limiter.limit("60/minute")
+async def expiring_certs(
+    request: Request,
+    days_ahead: int = Query(default=30, ge=1, le=365),
+    db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
+):
+    """Return subcontractors with license, insurance, or bond expiring within days_ahead."""
+    expiring = get_expiring_certs(db, days_ahead=days_ahead)
+    return {
+        "count": len(expiring),
+        "days_ahead": days_ahead,
+        "expiring": expiring,
+    }
+
+
+# ── Performance history endpoints ─────────────────────────────────────────────
+
+class PerformanceCreate(BaseModel):
+    subcontractor_id: Optional[int] = None
+    project_name: str
+    scope: Optional[str] = None
+    on_time: int = 1
+    quality_rating: Optional[int] = None   # 1-5
+    payment_dispute: int = 0
+    rehire_recommended: int = 1
+    notes: Optional[str] = None
+    project_date: Optional[str] = None
+
+
+def _perf_dict(p: SubcontractorPerformance) -> dict:
+    return {
+        "id": p.id,
+        "subcontractor_id": p.subcontractor_id,
+        "project_name": p.project_name,
+        "scope": p.scope,
+        "on_time": bool(p.on_time),
+        "quality_rating": p.quality_rating,
+        "payment_dispute": bool(p.payment_dispute),
+        "rehire_recommended": bool(p.rehire_recommended),
+        "notes": p.notes,
+        "project_date": p.project_date.isoformat() if p.project_date else None,
+        "created_at": p.created_at.isoformat(),
+    }
+
+
+@router.get("/{sub_id}/performance", summary="Get performance history for a subcontractor")
+@limiter.limit("60/minute")
+async def get_performance(
+    request: Request,
+    sub_id: int,
+    db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
+):
+    rows = (
+        db.query(SubcontractorPerformance)
+        .filter(SubcontractorPerformance.subcontractor_id == sub_id)
+        .order_by(SubcontractorPerformance.project_date.desc())
+        .all()
     )
-    db.add(rev)
-    # Update aggregate rating
-    all_reviews = db.query(SubcontractorPerformance).filter(SubcontractorPerformance.sub_id == sub_id).all()
-    scores = [((r.quality_score or 0) + (r.schedule_score or 0) + (r.communication_score or 0)) / 3 for r in all_reviews]
-    scores.append((body.quality_score + body.schedule_score + body.communication_score) / 3)
-    s.rating = round(sum(scores) / len(scores), 2)
-    db.commit()
-    return {'sub_id': sub_id, 'rating': s.rating}
+    total = len(rows)
+    on_time_pct = round(sum(1 for r in rows if r.on_time) / total * 100, 1) if total else None
+    avg_quality = (
+        round(sum(r.quality_rating for r in rows if r.quality_rating) / sum(1 for r in rows if r.quality_rating), 1)
+        if any(r.quality_rating for r in rows) else None
+    )
+    disputes = sum(1 for r in rows if r.payment_dispute)
+    rehire_pct = round(sum(1 for r in rows if r.rehire_recommended) / total * 100, 1) if total else None
+    return {
+        "subcontractor_id": sub_id,
+        "total_projects": total,
+        "on_time_pct": on_time_pct,
+        "avg_quality_rating": avg_quality,
+        "payment_disputes": disputes,
+        "rehire_pct": rehire_pct,
+        "history": [_perf_dict(r) for r in rows],
+    }
 
 
-@router.delete('/{sub_id}', dependencies=[Depends(verify_premium_security)])
-async def deactivate_sub(sub_id: str, db: Session = Depends(get_db)):
-    s = db.query(SubcontractorRoster).filter(SubcontractorRoster.id == sub_id).first()
-    if not s:
-        raise HTTPException(status_code=404, detail='Subcontractor not found')
-    s.status = 'inactive'
+@router.post("/{sub_id}/performance", summary="Add a performance record for a subcontractor")
+@limiter.limit("30/minute")
+async def add_performance(
+    request: Request,
+    sub_id: int,
+    req: PerformanceCreate,
+    db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
+):
+    perf = SubcontractorPerformance(
+        subcontractor_id=sub_id,
+        project_name=req.project_name,
+        scope=req.scope,
+        on_time=req.on_time,
+        quality_rating=req.quality_rating,
+        payment_dispute=req.payment_dispute,
+        rehire_recommended=req.rehire_recommended,
+        notes=req.notes,
+        project_date=_parse_dt(req.project_date),
+    )
+    db.add(perf)
     db.commit()
-    return {'sub_id': sub_id, 'status': 'inactive'}
+    db.refresh(perf)
+    return {"status": "created", **_perf_dict(perf)}
+
+
+@router.delete("/performance/{perf_id}", summary="Delete a performance record")
+@limiter.limit("30/minute")
+async def delete_performance(
+    request: Request,
+    perf_id: int,
+    db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
+):
+    perf = db.get(SubcontractorPerformance, perf_id)
+    if not perf:
+        raise HTTPException(status_code=404, detail="Performance record not found")
+    db.delete(perf)
+    db.commit()
+    return {"status": "deleted", "id": perf_id}
+

@@ -1,92 +1,157 @@
-"""Monitoring — comprehensive system status + on-demand heartbeat (anti-silent-stall)."""
-from __future__ import annotations
+"""
+monitoring.py — Datadog + Slack monitoring endpoints.
 
+Routes:
+  GET /api/v1/monitoring/health          — Public health check with dependency status
+  GET /api/v1/admin/monitoring/status    — Admin-only monitoring configuration status
+
+The health endpoint is intentionally public (no auth) so external uptime
+monitors (UptimeRobot, Datadog Synthetics, etc.) can poll it without a token.
+
+The admin status endpoint requires the premium security bearer token and
+returns the full monitoring configuration, including which integrations are
+active and the current Datadog/Slack settings.
+"""
+
+import logging
 import time
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import text
-from sqlalchemy.orm import Session
+from fastapi.responses import JSONResponse
 
-from ..config import settings
-from ..core.limiter import limiter
+from ..core.limiter import HEALTH_LIMIT, limiter
 from ..core.security import verify_premium_security
-from ..database import get_db
+from ..services.monitoring_service import monitoring
 
-router = APIRouter(prefix='/monitoring', tags=['monitoring'])
+logger = logging.getLogger(__name__)
 
-_PROCESS_START = time.monotonic()
-_PROCESS_START_AT = datetime.now(timezone.utc)
+router = APIRouter(tags=["monitoring"])
 
 
-def _check_db(db: Session) -> dict:
+# ── Public health check ───────────────────────────────────────────────────────
+
+
+@router.get(
+    "/api/v1/monitoring/health",
+    summary="Health check with dependency status",
+    response_description="Service health and dependency availability",
+)
+@limiter.limit(HEALTH_LIMIT)
+async def monitoring_health(request: Request):
+    """
+    Public health check endpoint.  Returns HTTP 200 when the API is healthy
+    and HTTP 503 when any critical dependency (database, Redis) is unavailable.
+
+    Suitable for:
+    - Datadog Synthetic monitors
+    - UptimeRobot / Better Uptime / Pingdom
+    - External status pages
+    """
+    start = time.monotonic()
+
+    # ── Database probe ────────────────────────────────────────────────────────
+    db_status: dict = {"ok": False, "error": "not checked"}
     try:
-        started = time.monotonic()
-        db.execute(text('SELECT 1'))
-        return {'ok': True, 'latency_ms': round((time.monotonic() - started) * 1000, 1)}
-    except Exception as exc:
-        return {'ok': False, 'error': str(exc)[:200]}
+        from ..database import engine  # noqa: PLC0415
+        from sqlalchemy import text  # noqa: PLC0415
 
+        t0 = time.monotonic()
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        db_status = {"ok": True, "latency_ms": round((time.monotonic() - t0) * 1000, 2)}
+    except Exception as exc:  # noqa: BLE001
+        error_msg = str(exc)
+        logger.error("Health check: database unavailable: %s", error_msg)
+        db_status = {"ok": False, "error": error_msg}
+        # Fire Slack + Datadog alert for DB failure
+        monitoring.alert_db_failure(error_msg)
 
-def _check_redis() -> dict:
-    if not settings.redis_url or settings.redis_url.startswith('memory'):
-        return {'ok': None, 'configured': False}
+    # ── Redis probe ───────────────────────────────────────────────────────────
+    redis_status: dict = {"ok": False, "error": "not checked"}
     try:
-        import redis
-        started = time.monotonic()
-        client = redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
-        client.ping()
-        return {'ok': True, 'configured': True, 'latency_ms': round((time.monotonic() - started) * 1000, 1)}
-    except Exception as exc:
-        return {'ok': False, 'configured': True, 'error': str(exc)[:200]}
+        from ..services.celery_health import check_redis_connection  # noqa: PLC0415
 
+        redis_status = check_redis_connection()
+    except Exception as exc:  # noqa: BLE001
+        redis_status = {"ok": False, "error": str(exc)}
 
-def _provider_config() -> dict:
-    """Which external providers have keys set (booleans only — never the values)."""
-    return {
-        'anthropic': bool(settings.anthropic_api_key),
-        'openai': bool(settings.openai_api_key),
-        'stripe': bool(settings.stripe_secret_key),
-        'twilio': bool(settings.twilio_account_sid),
-        'sendgrid': bool(settings.sendgrid_api_key),
-        'regrid': bool(settings.regrid_api_key),
-        'lob': bool(settings.lob_api_key),
-        'sentry': bool(settings.sentry_dsn),
-        'heartbeat_email': bool(settings.heartbeat_email),
+    elapsed_ms = round((time.monotonic() - start) * 1000, 2)
+    all_ok = db_status["ok"] and redis_status["ok"]
+
+    # Ship latency metric to Datadog
+    monitoring.log_metric(
+        "api.health_check.latency_ms",
+        elapsed_ms,
+        tags=["endpoint:/api/v1/monitoring/health"],
+    )
+    monitoring.log_metric(
+        "api.health_check.status",
+        1 if all_ok else 0,
+        tags=["endpoint:/api/v1/monitoring/health"],
+    )
+
+    payload = {
+        "status": "healthy" if all_ok else "degraded",
+        "service": "jworden-api",
+        "checks": {
+            "database": db_status,
+            "redis": redis_status,
+        },
+        "elapsed_ms": elapsed_ms,
     }
 
+    return JSONResponse(content=payload, status_code=200 if all_ok else 503)
 
-@router.get('/status', summary='Comprehensive system health for dashboards and uptime probes')
-@limiter.limit('60/minute')
-async def system_status(
+
+# ── Admin monitoring status ───────────────────────────────────────────────────
+
+
+@router.get(
+    "/api/v1/admin/monitoring/status",
+    summary="Monitoring configuration status (admin only)",
+    response_description="Datadog and Slack integration status",
+)
+@limiter.limit(HEALTH_LIMIT)
+async def monitoring_status(
     request: Request,
-    db: Session = Depends(get_db),
     _: dict = Depends(verify_premium_security),
 ):
-    db_check = _check_db(db)
-    redis_check = _check_redis()
-    checks_ok = db_check['ok'] and redis_check['ok'] is not False
+    """
+    Admin-only endpoint that returns the current monitoring configuration.
+
+    Shows whether Datadog and Slack integrations are active, the configured
+    environment/service/version tags, and a summary of what is being monitored.
+
+    Requires a valid bearer token (master key or JWT).
+    """
+    mon_status = monitoring.status()
+
     return {
-        'status': 'ok' if checks_ok else 'degraded',
-        'environment': settings.environment,
-        'started_at': _PROCESS_START_AT.isoformat(),
-        'uptime_seconds': int(time.monotonic() - _PROCESS_START),
-        'database': db_check,
-        'redis': redis_check,
-        'providers_configured': _provider_config(),
-        'timestamp': datetime.now(timezone.utc).isoformat(),
+        "monitoring": {
+            **mon_status,
+            "alert_thresholds": {
+                "error_rate_pct": 5.0,
+                "latency_p95_ms": 1000,
+                "consecutive_health_failures": 2,
+            },
+            "alert_channels": {
+                "slack": mon_status["slack_enabled"],
+                "datadog_events": mon_status["datadog_enabled"],
+            },
+            "tracked_metrics": [
+                "api.errors.5xx",
+                "api.request.latency_ms",
+                "api.health_check.latency_ms",
+                "api.health_check.status",
+                "api.db.connection_failures",
+                "api.elasticsearch.unavailable",
+            ],
+            "alert_conditions": [
+                "5xx HTTP errors",
+                "Error rate > 5% of requests",
+                "p95 latency > 1000ms",
+                "Database connection failures",
+                "Elasticsearch unavailable",
+            ],
+        }
     }
-
-
-@router.post('/heartbeat', summary='Run the daily heartbeat now (collect vitals + send email)')
-@limiter.limit('10/minute')
-async def run_heartbeat(
-    request: Request,
-    db: Session = Depends(get_db),
-    _: dict = Depends(verify_premium_security),
-):
-    from ..tasks.heartbeat import build_heartbeat_summary, send_heartbeat_email
-
-    summary = build_heartbeat_summary(db)
-    sent = send_heartbeat_email(summary)
-    return {**summary, 'email_sent': sent}
