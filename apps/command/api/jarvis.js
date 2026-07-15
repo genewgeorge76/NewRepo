@@ -30,12 +30,28 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { message, systemState } = req.body;
+  const { message, systemState, history } = req.body;
 
   try {
     if (!process.env.CLAUDE_API_KEY) {
-      let simResponse = "I am operating in offline simulation mode, Sir. I cannot search the web without an Anthropic API key.";
-      return res.status(200).json({ response: simResponse, toolCall: null });
+      // No local key — route through the live JWordenAI Brain (Fly.io), which
+      // holds the AI credentials server-side. Public concierge endpoint, no auth.
+      const BRAIN_URL = process.env.BRAIN_API_URL || 'https://jworden-api.fly.dev';
+      try {
+        const cleanHistory = Array.isArray(history)
+          ? history.slice(-20).map(m => ({ role: m.role, content: String(m.content).slice(0, 800) }))
+          : undefined;
+        const brainRes = await fetch(`${BRAIN_URL}/api/v1/public/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: String(message).slice(0, 800), history: cleanHistory, state_code: 'VA' })
+        });
+        if (!brainRes.ok) throw new Error(`Brain responded ${brainRes.status}`);
+        const brain = await brainRes.json();
+        return res.status(200).json({ response: brain.message, toolCall: null });
+      } catch (brainErr) {
+        return res.status(200).json({ response: `Brain link unavailable, Sir (${brainErr.message}). Set CLAUDE_API_KEY or BRAIN_API_URL to restore intelligence.`, toolCall: null });
+      }
     }
 
     const anthropic = new Anthropic({ apiKey: process.env.CLAUDE_API_KEY });
