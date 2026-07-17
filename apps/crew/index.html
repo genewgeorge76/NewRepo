@@ -60,6 +60,15 @@
     <label>Job site</label>
     <input id="job" value="Lake Drive Plaza — Vinton, VA" />
 
+    <div class="card" id="checklistCard">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="font-weight:700;color:var(--amber);font-size:13px;flex:1">SITE PHOTO CHECKLIST</div>
+        <button class="ghost" id="pinBtn" style="flex:0;padding:6px 10px;font-size:10px">📍 Pin job here</button>
+      </div>
+      <div class="banner" id="onsite"></div>
+      <div id="checklist"></div>
+    </div>
+
     <div class="grid">
       <button class="tile arrival" data-type="arrival"><span class="ic">📍</span>Arrival + Clock-in</button>
       <button class="tile progress" data-type="progress"><span class="ic">🚧</span>Progress</button>
@@ -89,6 +98,47 @@ const $ = s => document.querySelector(s);
 const TOKEN='wc_token', UNAME='wc_user', UROLE='wc_role';
 let pendingType = null;
 
+// ── Per-job photo checklists (standard feature; edit/extend freely) ──────────
+const CHECKLISTS = {
+  'Lake Drive Plaza — Vinton, VA': [
+    'Back of the center', 'Arrival + cones set', 'Progress — sections done',
+    'Asphalt tonnage / materials', 'Equipment staging (evening)', 'End of day — finished sections'
+  ]
+};
+const DEFAULT_CHECKLIST = ['Arrival + cones set', 'Progress', 'Equipment staging', 'End of day'];
+const checklistFor = job => CHECKLISTS[job] || DEFAULT_CHECKLIST;
+const todayKey = () => new Date().toDateString();
+
+function renderChecklist(){
+  const job = $('#job').value.trim();
+  const items = checklistFor(job);
+  const storeKey = `wc_chk_${job}_${todayKey()}`;
+  const done = JSON.parse(localStorage.getItem(storeKey) || '{}');
+  const el = $('#checklist');
+  el.innerHTML = items.map((it,i)=>{
+    const first = i===0 ? ' style="color:var(--amber)"' : '';
+    return `<label class="log" style="cursor:pointer"><input type="checkbox" data-i="${i}" ${done[i]?'checked':''} style="width:auto;flex:0"/><span${first}>${it}</span></label>`;
+  }).join('');
+  el.querySelectorAll('input[type=checkbox]').forEach(cb => cb.onchange = () => {
+    done[cb.dataset.i] = cb.checked; localStorage.setItem(storeKey, JSON.stringify(done));
+  });
+}
+
+function haversine(a,b){ const R=6371000,t=x=>x*Math.PI/180;
+  const dLat=t(b.lat-a.lat),dLng=t(b.lng-a.lng);
+  const s=Math.sin(dLat/2)**2+Math.cos(t(a.lat))*Math.cos(t(b.lat))*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(s)); }
+
+async function checkOnSite(){
+  const job=$('#job').value.trim(); const pin=JSON.parse(localStorage.getItem('wc_pin_'+job)||'null');
+  const box=$('#onsite'); if(!pin){ box.textContent=''; return; }
+  const g=await getGPS(); if(!g.lat){ box.textContent=''; return; }
+  const d=haversine(g,pin);
+  if(d<200){ const first=checklistFor(job)[0];
+    box.innerHTML=`<span style="color:var(--green)">● On-site at this job — first up: <b>${first}</b></span>`; }
+  else { box.innerHTML=`<span class="banner">${Math.round(d)}m from this job's pin.</span>`; }
+}
+
 function toast(msg, ms=2600){ const t=$('#toast'); t.textContent=msg; t.classList.remove('hidden'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.add('hidden'), ms); }
 function authHdr(){ return 'Bearer ' + (localStorage.getItem(TOKEN)||''); }
 
@@ -96,6 +146,7 @@ function showShift(){
   $('#loginView').classList.add('hidden'); $('#shiftView').classList.remove('hidden');
   $('#logout').classList.remove('hidden');
   $('#who').textContent = (localStorage.getItem(UNAME)||'') + (localStorage.getItem(UROLE)?(' · '+localStorage.getItem(UROLE)):'');
+  renderChecklist(); checkOnSite();
   loadLog();
 }
 function showLogin(){ $('#shiftView').classList.add('hidden'); $('#loginView').classList.remove('hidden'); $('#logout').classList.add('hidden'); $('#who').textContent=''; }
@@ -114,6 +165,15 @@ $('#loginBtn').onclick = async () => {
 };
 
 $('#logout').onclick = () => { localStorage.removeItem(TOKEN); showLogin(); };
+
+$('#job').addEventListener('change', () => { renderChecklist(); checkOnSite(); });
+$('#pinBtn').onclick = async () => {
+  const job=$('#job').value.trim(); $('#pinBtn').textContent='Pinning…';
+  const g=await getGPS();
+  if(!g.lat){ toast('Could not get GPS — check location permission.'); $('#pinBtn').textContent='📍 Pin job here'; return; }
+  localStorage.setItem('wc_pin_'+job, JSON.stringify(g));
+  $('#pinBtn').textContent='📍 Pin job here'; toast('Job site pinned — on-site detection is live.'); checkOnSite();
+};
 
 // Photo tiles → open camera, remember which type was tapped
 document.querySelectorAll('.tile').forEach(t => t.onclick = () => { pendingType = t.dataset.type; $('#picker').click(); });
@@ -149,6 +209,13 @@ $('#picker').onchange = async (e) => {
     if(r.status===401){ toast('Session expired — log in again.'); showLogin(); return; }
     if(!r.ok){ toast('Failed: '+(d.error||'error')); return; }
     toast(type.toUpperCase()+' logged ✓'+(gps.lat?' (GPS)':''));
+    // Auto-check the first unchecked checklist item that matches this photo's type/note
+    const storeKey = `wc_chk_${job}_${todayKey()}`;
+    const done = JSON.parse(localStorage.getItem(storeKey) || '{}');
+    const items = checklistFor(job);
+    const idx = items.findIndex((it,i)=>!done[i] && (it.toLowerCase().includes(type) || (type==='arrival'&&/arrival/i.test(it)) || (type==='equipment'&&/equipment/i.test(it)) || (type==='eod'&&/end of day/i.test(it))));
+    if(idx>=0){ done[idx]=true; localStorage.setItem(storeKey, JSON.stringify(done)); }
+    renderChecklist();
     loadLog();
   }catch(e){ toast('Network error — photo not sent.'); }
 };
