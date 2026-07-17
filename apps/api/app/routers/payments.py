@@ -1,47 +1,31 @@
-"""
-payments.py — Stripe checkout and webhook router.
-
-Routes (under /api/v1/payments):
-  POST /checkout-session     create Stripe deposit checkout session
-  POST /webhook              Stripe webhook handler
-  GET  /status/{lead_id}     get latest payment transaction for a lead
-"""
-from __future__ import annotations
+"""Stripe checkout + webhook endpoints for deposit collection."""
 
 import logging
+import os
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from ..core.limiter import PAYMENTS_LIMIT, limiter
+from ..core.limiter import limiter
 from ..core.security import verify_premium_security
 from ..database import get_db
 from ..models import Lead, PaymentTransaction
+from ..services.pricing import estimate_price
 
 logger = logging.getLogger(__name__)
-
-router = APIRouter(prefix='/payments', tags=['payments'])
+router = APIRouter(prefix='/api/v1/payments', tags=['payments'])
 
 
 class CheckoutRequest(BaseModel):
-    lead_id: str
-    success_url: str
-    cancel_url: str
-    deposit_pct: float = 0.20
+    lead_id: int
+    success_url: str | None = None
+    cancel_url: str | None = None
 
 
-def _stripe():
-    import stripe as _s  # noqa: PLC0415
-    from ..config import settings  # noqa: PLC0415
-    if not settings.stripe_secret_key:
-        raise RuntimeError('STRIPE_SECRET_KEY not configured')
-    _s.api_key = settings.stripe_secret_key
-    return _s
-
-
-@router.post('/checkout-session', summary='Create a Stripe deposit checkout session')
-@limiter.limit(PAYMENTS_LIMIT)
+@router.post('/checkout-session', summary='Create Stripe checkout session for lead deposit')
+@limiter.limit('20/minute')
 async def create_checkout_session(
     request: Request,
     body: CheckoutRequest,
@@ -50,130 +34,126 @@ async def create_checkout_session(
 ):
     lead = db.get(Lead, body.lead_id)
     if not lead:
-        raise HTTPException(404, 'Lead not found')
+        raise HTTPException(status_code=404, detail='Lead not found')
 
-    estimated_value = lead.estimated_value or 0.0
-    if estimated_value <= 0:
-        raise HTTPException(422, 'Lead has no estimated value — set estimated_value before creating a payment')
+    price = estimate_price(lead.service_type, lead.property_type, lead.project_size_sqft or 1000)
+    low_estimate = float(price['low_usd']) if price else 500.0
+    deposit_amount = max(100.0, round(low_estimate * 0.2, 2))
 
-    deposit_amount = round(estimated_value * body.deposit_pct)
-    deposit_cents = int(deposit_amount * 100)
+    success_url = body.success_url or os.getenv('STRIPE_SUCCESS_URL', 'http://localhost:5173/quote?payment=success')
+    cancel_url = body.cancel_url or os.getenv('STRIPE_CANCEL_URL', 'http://localhost:5173/quote?payment=cancel')
 
-    from ..config import settings  # noqa: PLC0415
+    stripe_secret = os.getenv('STRIPE_SECRET_KEY', '').strip()
+    checkout_id = f'mock_cs_{lead.id}_{int(datetime.now(timezone.utc).timestamp())}'
+    checkout_url = f'{success_url}&session_id={checkout_id}'
 
-    if settings.stripe_secret_key:
+    if stripe_secret:
         try:
-            stripe = _stripe()
-            session = stripe.checkout.Session.create(
-                payment_method_types=['card'],
-                line_items=[{
-                    'price_data': {
-                        'currency': 'usd',
-                        'product_data': {
-                            'name': f'J. Worden & Sons — {int(body.deposit_pct * 100)}% Deposit',
-                            'description': f'Deposit for {lead.name} — {lead.service or "paving services"}',
-                        },
-                        'unit_amount': deposit_cents,
-                    },
-                    'quantity': 1,
-                }],
-                mode='payment',
-                success_url=body.success_url,
-                cancel_url=body.cancel_url,
-                metadata={'lead_id': str(body.lead_id)},
-            )
-            checkout_session_id = session.id
-            checkout_url = session.url
-        except Exception as exc:
-            logger.error('Stripe checkout creation failed: %s', exc)
-            raise HTTPException(503, f'Payment service error: {exc}') from exc
-    else:
-        # Demo mode — return a mock checkout URL
-        checkout_session_id = f'mock_cs_{body.lead_id}'
-        checkout_url = f'{body.success_url}?mock=1&lead={body.lead_id}'
+            import stripe  # noqa: PLC0415
 
-    txn = PaymentTransaction(
-        lead_id=body.lead_id,
-        stripe_checkout_session_id=checkout_session_id,
-        amount_cents=deposit_cents,
+            stripe.api_key = stripe_secret
+            session = stripe.checkout.Session.create(
+                mode='payment',
+                success_url=success_url,
+                cancel_url=cancel_url,
+                payment_method_types=['card'],
+                metadata={'lead_id': str(lead.id)},
+                line_items=[
+                    {
+                        'quantity': 1,
+                        'price_data': {
+                            'currency': 'usd',
+                            'product_data': {'name': f'Project Deposit — Lead #{lead.id}'},
+                            'unit_amount': int(deposit_amount * 100),
+                        },
+                    }
+                ],
+            )
+            checkout_id = session.id
+            checkout_url = session.url
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=f'Unable to create checkout session: {exc}') from exc
+
+    tx = PaymentTransaction(
+        lead_id=lead.id,
+        stripe_checkout_session_id=checkout_id,
+        amount_usd=deposit_amount,
+        currency='usd',
         status='pending',
     )
-    db.add(txn)
+    db.add(tx)
     db.commit()
-    db.refresh(txn)
+    db.refresh(tx)
 
     return {
-        'transaction_id': txn.id,
+        'payment_id': tx.id,
+        'lead_id': lead.id,
+        'amount_usd': deposit_amount,
+        'checkout_session_id': checkout_id,
         'checkout_url': checkout_url,
-        'amount_cents': deposit_cents,
-        'amount_usd': deposit_cents / 100,
-        'status': 'pending',
+        'status': tx.status,
     }
 
 
-@router.post('/webhook', summary='Stripe webhook handler')
-async def stripe_webhook(
-    request: Request,
-    stripe_signature: str = Header(default='', alias='stripe-signature'),
-    db: Session = Depends(get_db),
-):
+@router.post('/webhook', summary='Stripe webhook receiver')
+async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     payload = await request.body()
+    stripe_secret = os.getenv('STRIPE_SECRET_KEY', '').strip()
+    webhook_secret = os.getenv('STRIPE_WEBHOOK_SECRET', '').strip()
 
-    from ..config import settings  # noqa: PLC0415
+    event = None
+    if stripe_secret and webhook_secret:
+        try:
+            import stripe  # noqa: PLC0415
 
-    if not settings.stripe_webhook_secret:
-        raise HTTPException(501, 'Stripe webhook not configured')
+            stripe.api_key = stripe_secret
+            signature = request.headers.get('stripe-signature', '')
+            event = stripe.Webhook.construct_event(payload, signature, webhook_secret)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=f'Invalid Stripe webhook: {exc}') from exc
+    else:
+        try:
+            event = await request.json()
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=f'Invalid webhook payload: {exc}') from exc
 
-    try:
-        stripe = _stripe()
-        event = stripe.Webhook.construct_event(
-            payload, stripe_signature, settings.stripe_webhook_secret
-        )
-    except Exception as exc:
-        logger.warning('Stripe webhook signature verification failed: %s', exc)
-        raise HTTPException(400, 'Invalid webhook signature') from exc
+    event_type = event.get('type', '')
+    data_obj = ((event.get('data') or {}).get('object') or {})
 
-    if event['type'] == 'checkout.session.completed':
-        session = event['data']['object']
-        session_id = session.get('id')
-        payment_intent = session.get('payment_intent')
-
-        txn = (
-            db.query(PaymentTransaction)
-            .filter(PaymentTransaction.stripe_checkout_session_id == session_id)
-            .first()
-        )
-        if txn:
-            txn.status = 'paid'
-            if payment_intent:
-                txn.stripe_payment_intent_id = payment_intent
+    if event_type in {'checkout.session.completed', 'payment_intent.succeeded'}:
+        checkout_id = data_obj.get('id') or data_obj.get('checkout_session')
+        tx = db.query(PaymentTransaction).filter(PaymentTransaction.stripe_checkout_session_id == checkout_id).first()
+        if tx:
+            tx.status = 'paid'
+            tx.stripe_payment_intent_id = data_obj.get('payment_intent') or data_obj.get('id')
+            tx.paid_at = datetime.now(timezone.utc)
+            lead = db.get(Lead, tx.lead_id)
+            if lead and lead.pipeline_stage in {'new', 'contacted'}:
+                lead.pipeline_stage = 'proposal_sent'
             db.commit()
-            logger.info('Payment marked paid for session %s (lead %s)', session_id, txn.lead_id)
 
-    return {'received': True}
+    return {'received': True, 'type': event_type}
 
 
 @router.get('/status/{lead_id}', summary='Get latest payment status for a lead')
+@limiter.limit('60/minute')
 async def payment_status(
-    lead_id: str,
+    request: Request,
+    lead_id: int,
     db: Session = Depends(get_db),
     _: dict = Depends(verify_premium_security),
 ):
-    txn = (
+    tx = (
         db.query(PaymentTransaction)
         .filter(PaymentTransaction.lead_id == lead_id)
         .order_by(PaymentTransaction.created_at.desc())
         .first()
     )
-    if not txn:
-        raise HTTPException(404, 'No payment transaction found for this lead')
 
     return {
-        'transaction_id': txn.id,
-        'lead_id': txn.lead_id,
-        'amount_cents': txn.amount_cents,
-        'amount_usd': (txn.amount_cents or 0) / 100,
-        'status': txn.status,
-        'stripe_checkout_session_id': txn.stripe_checkout_session_id,
-        'created_at': txn.created_at.isoformat(),
+        'lead_id': lead_id,
+        'has_payment': bool(tx),
+        'status': tx.status if tx else 'none',
+        'amount_usd': tx.amount_usd if tx else None,
+        'paid_at': tx.paid_at.isoformat() if tx and tx.paid_at else None,
     }

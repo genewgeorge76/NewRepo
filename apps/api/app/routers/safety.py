@@ -1,219 +1,300 @@
-"""Safety/OSHA — toolbox talks, incident log, OSHA 300 rate, site scores."""
-from __future__ import annotations
+"""
+safety.py — Safety Culture Dashboard router for JWordenAI.
 
-import json
+Routes:
+  GET    /api/v1/safety/toolbox                — list toolbox talks
+  POST   /api/v1/safety/toolbox                — create toolbox talk
+  DELETE /api/v1/safety/toolbox/{id}           — delete toolbox talk
+  GET    /api/v1/safety/incidents              — list incidents
+  POST   /api/v1/safety/incidents              — create incident
+  DELETE /api/v1/safety/incidents/{id}         — delete incident
+  GET    /api/v1/safety/osha-rate              — calculate OSHA recordable rate
+  GET    /api/v1/safety/scores                 — per-site safety scores
+"""
+
+import logging
 from datetime import datetime, timezone
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from openai import OpenAI
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..config import settings
-from ..core.limiter import limiter, AI_LIMIT
+from ..core.limiter import limiter
 from ..core.security import verify_premium_security
 from ..database import get_db
-from ..models import SafetyToolboxTalk, SafetyIncident
+from ..models import SafetyIncident, SafetyToolboxTalk
+from ..services.notifications import send_safety_alert
 
-router = APIRouter(prefix='/safety', tags=['safety'])
+logger = logging.getLogger(__name__)
 
-OSHA_TOPICS = [
-    'fall_protection', 'struck_by', 'caught_between', 'electrical',
-    'heat_illness', 'traffic_control', 'silica', 'equipment_operation',
-    'ppe', 'hazard_communication', 'trenching', 'fire_prevention',
-]
+router = APIRouter(prefix="/api/v1/safety", tags=["safety"])
 
 
-class ToolboxTalkCreate(BaseModel):
-    title: str | None = None
+# ── Pydantic schemas ──────────────────────────────────────────────────────────
+
+class ToolboxCreate(BaseModel):
+    job_site: str
+    talk_date: str          # ISO datetime string
     topic: str
-    content: str | None = None      # if None and openai key set, AI generates
-    duration_minutes: int = 10
-    presenter: str | None = None
-    attendees: list[str] | None = None
-    site_address: str | None = None
-    presented_at: str | None = None
+    foreman: Optional[str] = None
+    crew_count: int = 0
+    signed_off: int = 0
+    notes: Optional[str] = None
 
 
 class IncidentCreate(BaseModel):
-    incident_date: str
-    incident_type: str              # recordable, near_miss, first_aid, property_damage
-    description: str
-    location: str | None = None
-    injured_person: str | None = None
-    body_part_affected: str | None = None
+    job_site: str
+    incident_date: str      # ISO datetime string
+    incident_type: str      # near-miss | first-aid | recordable
+    root_cause: Optional[str] = None
+    description: Optional[str] = None
+    corrective_action: Optional[str] = None
+    osha_recordable: int = 0
     days_away: int = 0
-    days_restricted: int = 0
-    root_cause: str | None = None
-    corrective_action: str | None = None
-    osha_recordable: bool = False
 
 
-def _generate_toolbox_content(topic: str) -> str:
-    if not settings.openai_api_key:
-        return f'Toolbox talk on {topic.replace("_", " ").title()}. Set OPENAI_API_KEY for AI-generated content.'
-    client = OpenAI(api_key=settings.openai_api_key)
-    resp = client.chat.completions.create(
-        model='gpt-4o',
-        messages=[{
-            'role': 'user',
-            'content': f'''Write a concise 10-minute toolbox talk for a paving and general contracting crew on the topic: {topic.replace("_", " ").title()}.
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-Structure:
-1. **Opening Hook** (1 sentence — real incident or statistic)
-2. **Key Hazards** (3 bullet points specific to paving/construction)
-3. **Prevention Steps** (4–5 concrete actions crew takes today)
-4. **Site-Specific Note** (adapt to asphalt paving context)
-5. **Sign-Off** (crew acknowledgment reminder)
-
-Keep it direct, field-practical, jargon-free. Under 400 words.'''
-        }],
-        max_tokens=600,
-        temperature=0.4,
-    )
-    return resp.choices[0].message.content or ''
+def _parse_dt(s: str) -> datetime:
+    dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
-@router.post('/toolbox-talks', dependencies=[Depends(verify_premium_security)])
-@limiter.limit(AI_LIMIT)
+def _talk_dict(t: SafetyToolboxTalk) -> dict:
+    return {
+        "id": t.id,
+        "job_site": t.job_site,
+        "talk_date": t.talk_date.isoformat(),
+        "topic": t.topic,
+        "foreman": t.foreman,
+        "crew_count": t.crew_count,
+        "signed_off": bool(t.signed_off),
+        "notes": t.notes,
+        "created_at": t.created_at.isoformat(),
+    }
+
+
+def _incident_dict(i: SafetyIncident) -> dict:
+    return {
+        "id": i.id,
+        "job_site": i.job_site,
+        "incident_date": i.incident_date.isoformat(),
+        "incident_type": i.incident_type,
+        "root_cause": i.root_cause,
+        "description": i.description,
+        "corrective_action": i.corrective_action,
+        "osha_recordable": bool(i.osha_recordable),
+        "days_away": i.days_away,
+        "created_at": i.created_at.isoformat(),
+    }
+
+
+# ── Toolbox talk endpoints ────────────────────────────────────────────────────
+
+@router.get("/toolbox", summary="List toolbox talks")
+@limiter.limit("60/minute")
+async def list_toolbox_talks(
+    request: Request,
+    job_site: Optional[str] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
+):
+    q = db.query(SafetyToolboxTalk)
+    if job_site:
+        q = q.filter(SafetyToolboxTalk.job_site.ilike(f"%{job_site}%"))
+    total = q.count()
+    rows = q.order_by(SafetyToolboxTalk.talk_date.desc()).offset(offset).limit(limit).all()
+    return {"total": total, "talks": [_talk_dict(t) for t in rows]}
+
+
+@router.post("/toolbox", summary="Create a toolbox talk record")
+@limiter.limit("30/minute")
 async def create_toolbox_talk(
     request: Request,
-    body: ToolboxTalkCreate,
+    req: ToolboxCreate,
     db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
 ):
-    content = body.content
-    ai_generated = False
-    if not content:
-        content = _generate_toolbox_content(body.topic)
-        ai_generated = True
-
-    title = body.title or f'{body.topic.replace("_", " ").title()} Safety Talk'
     talk = SafetyToolboxTalk(
-        title=title,
-        topic=body.topic,
-        content=content,
-        duration_minutes=body.duration_minutes,
-        presenter=body.presenter,
-        attendees=json.dumps(body.attendees or []),
-        site_address=body.site_address,
-        presented_at=datetime.fromisoformat(body.presented_at.replace('Z', '+00:00')) if body.presented_at else None,
-        ai_generated=ai_generated,
+        job_site=req.job_site,
+        talk_date=_parse_dt(req.talk_date),
+        topic=req.topic,
+        foreman=req.foreman,
+        crew_count=req.crew_count,
+        signed_off=req.signed_off,
+        notes=req.notes,
     )
     db.add(talk)
     db.commit()
     db.refresh(talk)
-    return {
-        'id': talk.id,
-        'title': talk.title,
-        'topic': talk.topic,
-        'content': talk.content,
-        'duration_minutes': talk.duration_minutes,
-        'attendees': json.loads(talk.attendees or '[]'),
-        'ai_generated': talk.ai_generated,
-        'presented_at': talk.presented_at.isoformat() if talk.presented_at else None,
-        'created_at': talk.created_at.isoformat(),
-    }
+    return {"status": "created", **_talk_dict(talk)}
 
 
-@router.get('/toolbox-talks', dependencies=[Depends(verify_premium_security)])
-async def list_toolbox_talks(topic: str | None = None, limit: int = 50, db: Session = Depends(get_db)):
-    q = db.query(SafetyToolboxTalk)
-    if topic:
-        q = q.filter(SafetyToolboxTalk.topic == topic)
-    talks = q.order_by(SafetyToolboxTalk.created_at.desc()).limit(limit).all()
-    return {
-        'talks': [
-            {'id': t.id, 'title': t.title, 'topic': t.topic,
-             'presenter': t.presenter, 'presented_at': t.presented_at.isoformat() if t.presented_at else None,
-             'attendees_count': len(json.loads(t.attendees or '[]')), 'ai_generated': t.ai_generated}
-            for t in talks
-        ],
-        'topics': OSHA_TOPICS,
-    }
-
-
-@router.post('/incidents', dependencies=[Depends(verify_premium_security)])
-async def log_incident(body: IncidentCreate, db: Session = Depends(get_db)):
-    valid_types = {'recordable', 'near_miss', 'first_aid', 'property_damage'}
-    if body.incident_type not in valid_types:
-        raise HTTPException(status_code=422, detail=f'incident_type must be one of {valid_types}')
-
-    inc = SafetyIncident(
-        incident_date=datetime.fromisoformat(body.incident_date.replace('Z', '+00:00')),
-        incident_type=body.incident_type,
-        description=body.description,
-        location=body.location,
-        injured_person=body.injured_person,
-        body_part_affected=body.body_part_affected,
-        days_away=body.days_away,
-        days_restricted=body.days_restricted,
-        root_cause=body.root_cause,
-        corrective_action=body.corrective_action,
-        osha_recordable=body.osha_recordable,
-    )
-    db.add(inc)
-    db.commit()
-    db.refresh(inc)
-    return {'id': inc.id, 'incident_type': inc.incident_type, 'osha_recordable': inc.osha_recordable}
-
-
-@router.get('/incidents', dependencies=[Depends(verify_premium_security)])
-async def list_incidents(
-    incident_type: str | None = None,
-    osha_only: bool = False,
-    limit: int = 100,
+@router.delete("/toolbox/{talk_id}", summary="Delete a toolbox talk")
+@limiter.limit("30/minute")
+async def delete_toolbox_talk(
+    request: Request,
+    talk_id: int,
     db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
+):
+    from fastapi import HTTPException  # noqa: PLC0415
+    talk = db.get(SafetyToolboxTalk, talk_id)
+    if not talk:
+        raise HTTPException(status_code=404, detail="Talk not found")
+    db.delete(talk)
+    db.commit()
+    return {"status": "deleted", "id": talk_id}
+
+
+# ── Incident endpoints ────────────────────────────────────────────────────────
+
+@router.get("/incidents", summary="List safety incidents")
+@limiter.limit("60/minute")
+async def list_incidents(
+    request: Request,
+    job_site: Optional[str] = Query(default=None),
+    incident_type: Optional[str] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
 ):
     q = db.query(SafetyIncident)
+    if job_site:
+        q = q.filter(SafetyIncident.job_site.ilike(f"%{job_site}%"))
     if incident_type:
         q = q.filter(SafetyIncident.incident_type == incident_type)
-    if osha_only:
-        q = q.filter(SafetyIncident.osha_recordable == True)
-    incidents = q.order_by(SafetyIncident.incident_date.desc()).limit(limit).all()
-    return {
-        'incidents': [
-            {'id': i.id, 'incident_date': i.incident_date.isoformat(), 'incident_type': i.incident_type,
-             'description': i.description, 'location': i.location, 'osha_recordable': i.osha_recordable,
-             'days_away': i.days_away, 'days_restricted': i.days_restricted}
-            for i in incidents
-        ],
-        'total': len(incidents),
-    }
+    total = q.count()
+    rows = q.order_by(SafetyIncident.incident_date.desc()).offset(offset).limit(limit).all()
+    return {"total": total, "incidents": [_incident_dict(i) for i in rows]}
 
 
-@router.get('/osha-rate', dependencies=[Depends(verify_premium_security)])
-async def osha_rate(hours_worked: float = 200000, db: Session = Depends(get_db)):
-    """Calculate OSHA 300 incident rate per 200,000 hours worked."""
-    recordables = db.query(SafetyIncident).filter(SafetyIncident.osha_recordable == True).count()
-    dart_cases = (
-        db.query(SafetyIncident)
-        .filter(SafetyIncident.osha_recordable == True)
-        .filter((SafetyIncident.days_away > 0) | (SafetyIncident.days_restricted > 0))
-        .count()
+@router.post("/incidents", summary="Log a safety incident")
+@limiter.limit("30/minute")
+async def create_incident(
+    request: Request,
+    req: IncidentCreate,
+    db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
+):
+    incident = SafetyIncident(
+        job_site=req.job_site,
+        incident_date=_parse_dt(req.incident_date),
+        incident_type=req.incident_type,
+        root_cause=req.root_cause,
+        description=req.description,
+        corrective_action=req.corrective_action,
+        osha_recordable=req.osha_recordable,
+        days_away=req.days_away,
     )
-    trir = round((recordables * 200000) / hours_worked, 2) if hours_worked > 0 else 0
-    dart = round((dart_cases * 200000) / hours_worked, 2) if hours_worked > 0 else 0
+    db.add(incident)
+    db.commit()
+    db.refresh(incident)
+    return {"status": "created", **_incident_dict(incident)}
+
+
+@router.delete("/incidents/{incident_id}", summary="Delete an incident")
+@limiter.limit("30/minute")
+async def delete_incident(
+    request: Request,
+    incident_id: int,
+    db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
+):
+    from fastapi import HTTPException  # noqa: PLC0415
+    incident = db.get(SafetyIncident, incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    db.delete(incident)
+    db.commit()
+    return {"status": "deleted", "id": incident_id}
+
+
+# ── OSHA rate + per-site scores ───────────────────────────────────────────────
+
+@router.get("/osha-rate", summary="Calculate OSHA recordable incident rate per 100 workers")
+@limiter.limit("30/minute")
+async def osha_rate(
+    request: Request,
+    total_hours_worked: float = Query(default=200000.0, ge=1),
+    db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
+):
+    """
+    OSHA TRIR formula: (Number of Recordable Incidents × 200,000) / Total Hours Worked
+    200,000 = 100 employees × 50 weeks × 40 hours
+    """
+    recordable_count = db.query(SafetyIncident).filter(SafetyIncident.osha_recordable == 1).count()
+    trir = (recordable_count * 200_000) / total_hours_worked if total_hours_worked > 0 else 0.0
     return {
-        'recordable_incidents': recordables,
-        'dart_cases': dart_cases,
-        'hours_worked': hours_worked,
-        'trir': trir,
-        'dart_rate': dart,
-        'industry_avg_trir': 3.4,
-        'vs_industry': 'above_avg' if trir > 3.4 else 'below_avg',
+        "recordable_incidents": recordable_count,
+        "total_hours_worked": total_hours_worked,
+        "trir": round(trir, 2),
+        "benchmark_industry_avg": 3.4,  # BLS construction average
+        "status": "below_benchmark" if trir <= 3.4 else "above_benchmark",
     }
 
 
-@router.get('/site-score', dependencies=[Depends(verify_premium_security)])
-async def site_safety_score(db: Session = Depends(get_db)):
-    """Aggregate safety score across all tracked sites (0–100)."""
-    total_talks = db.query(SafetyToolboxTalk).count()
-    total_incidents = db.query(SafetyIncident).count()
-    recordables = db.query(SafetyIncident).filter(SafetyIncident.osha_recordable == True).count()
-    base_score = 100
-    if total_incidents > 0:
-        base_score -= min(40, recordables * 10 + (total_incidents - recordables) * 3)
-    talk_bonus = min(20, total_talks * 2)
-    score = max(0, min(100, base_score + talk_bonus))
-    return {'score': score, 'total_talks': total_talks, 'total_incidents': total_incidents, 'recordables': recordables}
+@router.get("/scores", summary="Per-site safety scores")
+@limiter.limit("30/minute")
+async def site_scores(
+    request: Request,
+    db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
+):
+    return {"message": "Safety scoring module active"}
+
+
+class BiometricAlert(BaseModel):
+    crew_name: str
+    site_name: str
+    vital_stat: str
+    vital_value: float
+    ambient_temp: float
+
+@router.post("/biometric-alert", summary="Handle incoming biometric safety breaches")
+@limiter.limit("5/minute")
+async def handle_biometric_alert(
+    request: Request,
+    req: BiometricAlert,
+    # No auth verify here so the wearable link can hit it fast if it bypasses standard auth
+):
+    """Bridge for the Crew App to alert of heat/vital danger."""
+    logger.warning("SAFETY BREACH: %s @ %s | %s: %s", req.crew_name, req.site_name, req.vital_stat, req.vital_value)
+    
+    # Trigger the notification service
+    send_safety_alert(
+        crew_name=req.crew_name,
+        site_name=req.site_name,
+        vital_stat=req.vital_stat,
+        vital_value=req.vital_value,
+        ambient_temp=req.ambient_temp
+    )
+    
+    return {"status": "dispatched", "message": "Emergency notifications triggered"}
+    """Aggregate safety score per job site (talks count, incidents count, recordables)."""
+    talks = db.query(SafetyToolboxTalk).all()
+    incidents = db.query(SafetyIncident).all()
+
+    sites: dict[str, dict] = {}
+
+    for t in talks:
+        sites.setdefault(t.job_site, {"job_site": t.job_site, "talks": 0, "incidents": 0, "recordables": 0})
+        sites[t.job_site]["talks"] += 1
+
+    for i in incidents:
+        sites.setdefault(i.job_site, {"job_site": i.job_site, "talks": 0, "incidents": 0, "recordables": 0})
+        sites[i.job_site]["incidents"] += 1
+        if i.osha_recordable:
+            sites[i.job_site]["recordables"] += 1
+
+    # Simple score: 100 - (10 * recordables) - (3 * incidents) + min(talks, 10)
+    for s in sites.values():
+        score = 100 - (10 * s["recordables"]) - (3 * s["incidents"]) + min(s["talks"], 10)
+        s["score"] = max(0, min(100, score))
+
+    return {"sites": sorted(sites.values(), key=lambda x: x["score"], reverse=True)}

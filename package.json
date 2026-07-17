@@ -2,8 +2,11 @@
   "name": "jworden-platform",
   "private": true,
   "workspaces": [
-    "apps/*",
-    "packages/*"
+    "apps/web",
+    "apps/ops",
+    "packages/core",
+    "packages/ai",
+    "packages/ui"
   ],
   "scripts": {
     "dev:web": "npm run dev --workspace=apps/web",
@@ -13,7 +16,8 @@
     "build:ops": "npm run build --workspace=apps/ops",
     "type-check": "npm run type-check --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
-    "test": "npm test --workspaces --if-present"
+    "test": "npm test --workspaces --if-present",
+    "dev:command": "npm --prefix apps/command run dev"
   },
   "devDependencies": {
     "typescript": "^5.8.3"

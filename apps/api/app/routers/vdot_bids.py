@@ -1,168 +1,124 @@
-"""VDOT bid scraper — list, get, trigger scan, stats."""
-from __future__ import annotations
+"""
+vdot_bids.py — VDOT bid board router.
 
-import re
-from datetime import datetime, timezone
+Routes:
+  GET  /api/v1/vdot-bids           — list stored bids (filterable by district, category, county)
+  GET  /api/v1/vdot-bids/{id}      — single bid detail
+  POST /api/v1/vdot-bids/scan      — trigger on-demand VDOT scrape
+  GET  /api/v1/vdot-bids/status    — health/config
 
-import httpx
-from bs4 import BeautifulSoup
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from sqlalchemy import func as sqlfunc
+All endpoints require premium auth.
+"""
+
+import logging
+import os
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..core.security import verify_premium_security
 from ..database import get_db
 from ..models import VdotBid
 
-router = APIRouter(prefix='/vdot-bids', tags=['vdot-bids'])
+logger = logging.getLogger(__name__)
 
-VDOT_URL = 'https://www.vdot.virginia.gov/business/construction-division/advertisement/'
-
-
-def _parse_dollar(text: str) -> float | None:
-    clean = re.sub(r'[^\d.]', '', (text or '').strip())
-    try:
-        return float(clean) if clean else None
-    except ValueError:
-        return None
+router = APIRouter(
+    prefix="/api/v1/vdot-bids",
+    tags=["VDOT Bids"],
+    dependencies=[Depends(verify_premium_security)],
+)
 
 
-def _scrape_vdot(db: Session) -> int:
-    try:
-        resp = httpx.get(VDOT_URL, timeout=30, follow_redirects=True)
-        resp.raise_for_status()
-    except Exception:
-        return 0
+# ── Endpoints ─────────────────────────────────────────────────────────────────
 
-    soup = BeautifulSoup(resp.text, 'html.parser')
-    new_count = 0
-
-    for row in soup.select('table tr'):
-        cells = [c.get_text(strip=True) for c in row.find_all(['td', 'th'])]
-        if len(cells) < 3:
-            continue
-
-        project_number = cells[0] if cells else None
-        project_name = cells[1] if len(cells) > 1 else 'Unnamed Project'
-        bid_date_str = cells[2] if len(cells) > 2 else None
-        est_str = cells[3] if len(cells) > 3 else None
-        district = cells[4] if len(cells) > 4 else None
-
-        if not project_number or project_number.lower() in {'project', 'project number', '#', ''}:
-            continue
-
-        existing = db.query(VdotBid).filter(VdotBid.project_number == project_number).first()
-        if existing:
-            continue
-
-        bid_date = None
-        if bid_date_str:
-            for fmt in ('%m/%d/%Y', '%Y-%m-%d', '%B %d, %Y'):
-                try:
-                    bid_date = datetime.strptime(bid_date_str, fmt).replace(tzinfo=timezone.utc)
-                    break
-                except ValueError:
-                    pass
-
-        estimated_cost = _parse_dollar(est_str or '')
-        tier = None
-        if estimated_cost:
-            if estimated_cost >= 5_000_000:
-                tier = 'WHALE'
-            elif estimated_cost >= 500_000:
-                tier = 'SHARK'
-            else:
-                tier = 'FISH'
-
-        bid = VdotBid(
-            project_number=project_number,
-            project_name=project_name,
-            district=district,
-            bid_date=bid_date,
-            estimated_cost=estimated_cost,
-            tier=tier,
-            url=VDOT_URL,
-            status='open',
-        )
-        db.add(bid)
-        new_count += 1
-
-    if new_count:
-        db.commit()
-    return new_count
+@router.get("/status")
+def vdot_status():
+    return {
+        "ok": True,
+        "provider": "vdot_api" if os.getenv("VDOT_BID_API_KEY") else "stub",
+        "vdot_key_set": bool(os.getenv("VDOT_BID_API_KEY")),
+        "beat_schedule": "daily at 07:00 UTC",
+    }
 
 
-@router.get('/', dependencies=[Depends(verify_premium_security)])
-async def list_bids(
-    status: str | None = None,
-    tier: str | None = None,
-    limit: int = 100,
-    db: Session = Depends(get_db),
+@router.get("")
+def list_bids(
+    db:           Session = Depends(get_db),
+    district:     Optional[str] = Query(None),
+    county:       Optional[str] = Query(None),
+    category:     Optional[str] = Query(None),
+    contract_type: Optional[str] = Query(None),
+    min_value:    Optional[float] = Query(None),
+    limit:        int = Query(50, ge=1, le=200),
+    offset:       int = Query(0, ge=0),
 ):
-    q = db.query(VdotBid)
-    if status:
-        q = q.filter(VdotBid.status == status)
-    if tier:
-        q = q.filter(VdotBid.tier == tier)
-    bids = q.order_by(VdotBid.bid_date).limit(limit).all()
+    """List VDOT bid opportunities stored from the last scrape."""
+    q = db.query(VdotBid).filter(VdotBid.is_active == True)  # noqa: E712
+    if district:
+        q = q.filter(VdotBid.district.ilike(f"%{district}%"))
+    if county:
+        q = q.filter(VdotBid.county.ilike(f"%{county}%"))
+    if category:
+        q = q.filter(VdotBid.category.ilike(f"%{category}%"))
+    if contract_type:
+        q = q.filter(VdotBid.contract_type.ilike(f"%{contract_type}%"))
+    if min_value is not None:
+        q = q.filter(VdotBid.estimated_value >= min_value)
+
+    total = q.count()
+    bids  = q.order_by(VdotBid.open_date.desc()).offset(offset).limit(limit).all()
+
     return {
-        'bids': [
-            {
-                'id': b.id,
-                'project_number': b.project_number,
-                'project_name': b.project_name,
-                'district': b.district,
-                'bid_date': b.bid_date.isoformat() if b.bid_date else None,
-                'estimated_cost': b.estimated_cost,
-                'tier': b.tier,
-                'status': b.status,
-            }
-            for b in bids
-        ],
-        'total': len(bids),
+        "total":  total,
+        "offset": offset,
+        "limit":  limit,
+        "bids": [_bid_dict(b) for b in bids],
     }
 
 
-@router.get('/stats', dependencies=[Depends(verify_premium_security)])
-async def bid_stats(db: Session = Depends(get_db)):
-    total = db.query(VdotBid).count()
-    open_count = db.query(VdotBid).filter(VdotBid.status == 'open').count()
-    avg_est = db.query(sqlfunc.avg(VdotBid.estimated_cost)).filter(VdotBid.estimated_cost.isnot(None)).scalar()
-    whale = db.query(VdotBid).filter(VdotBid.tier == 'WHALE').count()
-    shark = db.query(VdotBid).filter(VdotBid.tier == 'SHARK').count()
-    fish = db.query(VdotBid).filter(VdotBid.tier == 'FISH').count()
-    return {
-        'total': total,
-        'open': open_count,
-        'awarded': db.query(VdotBid).filter(VdotBid.status == 'awarded').count(),
-        'avg_estimated_cost': round(float(avg_est or 0), 2),
-        'by_tier': {'WHALE': whale, 'SHARK': shark, 'FISH': fish},
-    }
-
-
-@router.get('/{bid_id}', dependencies=[Depends(verify_premium_security)])
-async def get_bid(bid_id: int, db: Session = Depends(get_db)):
+@router.get("/{bid_id}")
+def get_bid(bid_id: int, db: Session = Depends(get_db)):
     bid = db.query(VdotBid).filter(VdotBid.id == bid_id).first()
     if not bid:
-        raise HTTPException(status_code=404, detail='Bid not found')
+        raise HTTPException(status_code=404, detail="Bid not found")
+    return _bid_dict(bid)
+
+
+@router.post("/scan")
+def trigger_scan(max_results: int = Query(50, ge=1, le=200)):
+    """Trigger an on-demand VDOT bid board scrape (runs synchronously in API process)."""
+    from ..database import SessionLocal        # noqa: PLC0415
+    from ..tasks.vdot_scraper import scrape_and_persist  # noqa: PLC0415
+
+    db = SessionLocal()
+    try:
+        result = scrape_and_persist(db, max_results=max_results)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("On-demand VDOT scan failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        db.close()
+
+    return {"ok": True, **result}
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _bid_dict(b: VdotBid) -> dict:
     return {
-        'id': bid.id,
-        'project_number': bid.project_number,
-        'project_name': bid.project_name,
-        'district': bid.district,
-        'county': bid.county,
-        'state_route': bid.state_route,
-        'bid_date': bid.bid_date.isoformat() if bid.bid_date else None,
-        'estimated_cost': bid.estimated_cost,
-        'project_type': bid.project_type,
-        'tier': bid.tier,
-        'url': bid.url,
-        'status': bid.status,
-        'scraped_at': bid.scraped_at.isoformat() if bid.scraped_at else None,
+        "id":              b.id,
+        "contract_id":     b.contract_id,
+        "title":           b.title,
+        "district":        b.district,
+        "county":          b.county,
+        "category":        b.category,
+        "contract_type":   b.contract_type,
+        "estimated_value": b.estimated_value,
+        "open_date":       b.open_date.isoformat() if b.open_date else None,
+        "close_date":      b.close_date.isoformat() if b.close_date else None,
+        "location_desc":   b.location_desc,
+        "prime_eligible":  b.prime_eligible,
+        "source":          b.source,
+        "scraped_at":      b.scraped_at.isoformat() if b.scraped_at else None,
     }
-
-
-@router.post('/scan', dependencies=[Depends(verify_premium_security)])
-async def trigger_scan(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    background_tasks.add_task(_scrape_vdot, db)
-    return {'status': 'scan_started', 'source': VDOT_URL}

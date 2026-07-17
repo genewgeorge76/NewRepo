@@ -1,106 +1,295 @@
-"""SendGrid transactional email service."""
+"""
+email_service.py — SendGrid transactional email client for J. Worden & Sons.
+
+Wraps the SendGrid Python SDK with:
+  - Automatic HTML + plain-text multipart messages
+  - Per-method retry logic (up to MAX_RETRIES attempts with exponential back-off)
+  - Graceful degradation when SENDGRID_API_KEY is not configured
+  - Structured logging for every send attempt
+
+Environment variables
+─────────────────────
+  SENDGRID_API_KEY    — SendGrid API key (required for live sends)
+  SENDGRID_FROM_EMAIL — Verified sender address (required for live sends)
+  SENDGRID_FROM_NAME  — Display name for the From header (optional)
+
+Public API
+──────────
+  send_quote_confirmation(lead)       → bool
+  send_admin_notification(lead)       → bool
+  send_follow_up(lead, task_type)     → bool
+  send_contact_response(contact)      → bool
+  send_raw(*, to, subject, html, text) → bool
+"""
+
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+import os
+import time
+from typing import Any
+
+from . import email_templates as tmpl
+from . import runtime_config as _cfg
 
 logger = logging.getLogger(__name__)
 
+# ── Configuration (live, runtime-config backed) ─────────────────────────────────────────────────────
 
-def _sg_client():
-    from ..config import settings
-    if not settings.sendgrid_api_key:
+def _api_key()    -> str: return _cfg.get("SENDGRID_API_KEY")
+def _from_email() -> str: return _cfg.get("SENDGRID_FROM_EMAIL")
+def _from_name()  -> str: return _cfg.get("SENDGRID_FROM_NAME") or "J. Worden & Sons Asphalt Paving"
+def _admin_email()-> str: return _cfg.get("ADMIN_NOTIFY_EMAIL") or "j.wordenandsonspaving@gmail.com"
+
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 1.0  # seconds; doubles on each retry
+
+
+# ── SendGrid client initialisation ────────────────────────────────────────────
+
+def _get_sg_client():
+    """
+    Return an initialised SendGrid API client, or None if the SDK is not
+    installed or the API key is missing.
+    """
+    if not _api_key():
+        logger.error(
+            "LEAD-NOTIFY-FAILED: SENDGRID_API_KEY not set \u2014 customer leads are landing in the database but NOBODY IS BEING EMAILED. "
+            "FIX: Railway dashboard \u2192 codexbuildfreeofbase44 service \u2192 Variables \u2192 add SENDGRID_API_KEY (get a free key at sendgrid.com/free)."
+        )
+        return None
+    if not _from_email():
+        logger.error(
+            "LEAD-NOTIFY-FAILED: SENDGRID_FROM_EMAIL not set \u2014 leads are landing in DB but no email is going out. "
+            "FIX: Railway \u2192 Variables \u2192 add SENDGRID_FROM_EMAIL=j.wordenandsonspaving@gmail.com (and verify that sender in SendGrid)."
+        )
         return None
     try:
-        from sendgrid import SendGridAPIClient
-        return SendGridAPIClient(api_key=settings.sendgrid_api_key)
+        import sendgrid  # type: ignore  # noqa: PLC0415
+        return sendgrid.SendGridAPIClient(api_key=_api_key())
     except ImportError:
-        logger.warning('sendgrid package not installed')
+        logger.error(
+            "sendgrid package not installed. "
+            "Add 'sendgrid==7.0.0' to requirements.txt and redeploy."
+        )
         return None
 
 
-def send_email(
+# ── Core send helper ──────────────────────────────────────────────────────────
+
+def send_raw(
+    *,
     to_email: str,
     subject: str,
-    html_content: str,
-    plain_text: str | None = None,
+    html_body: str,
+    plain_text: str = "",
+    from_email: str | None = None,
     from_name: str | None = None,
-    reply_to: str | None = None,
 ) -> bool:
-    """Send a transactional email via SendGrid. Returns True on success."""
-    from ..config import settings
-    client = _sg_client()
-    if not client:
-        logger.info('SendGrid not configured — email to %s suppressed: %s', to_email, subject)
-        return False
-    try:
-        from sendgrid.helpers.mail import Mail, Email, To, Content, ReplyTo
-        from_email = Email(settings.sendgrid_from_email, from_name or 'J. Worden & Sons')
-        msg = Mail(
-            from_email=from_email,
-            to_emails=To(to_email),
-            subject=subject,
-        )
-        msg.content = [Content('text/html', html_content)]
-        if plain_text:
-            msg.content.insert(0, Content('text/plain', plain_text))
-        if reply_to:
-            msg.reply_to = ReplyTo(reply_to)
-        resp = client.send(msg)
-        return resp.status_code in {200, 201, 202}
-    except Exception as e:
-        logger.error('SendGrid send failed to %s: %s', to_email, e)
+    """
+    Send a single transactional email via SendGrid with retry logic.
+
+    Args:
+        to_email:   Recipient email address.
+        subject:    Email subject line.
+        html_body:  Full HTML content.
+        plain_text: Plain-text fallback (recommended for deliverability).
+        from_email: Override sender address (defaults to SENDGRID_FROM_EMAIL).
+        from_name:  Override sender display name.
+
+    Returns:
+        True if the email was accepted by SendGrid (2xx response), False otherwise.
+    """
+    sg = _get_sg_client()
+    if sg is None:
         return False
 
+    sender_email = from_email or _from_email()
+    sender_name = from_name or _from_name()
 
-def send_lead_receipt(to_email: str, name: str, service: str) -> bool:
-    html = f"""
-<div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px">
-  <h2 style="color:#1a1a2e">Thank you, {name}!</h2>
-  <p>We received your request for <strong>{service}</strong>.</p>
-  <p>Our team reviews every lead within 1 business hour. We'll reach out by phone first, then email.</p>
-  <p style="color:#888;font-size:12px">J. Worden &amp; Sons · Chester, VA · (804) 524-3000</p>
-</div>"""
-    return send_email(to_email, "We Got Your Request — J. Worden & Sons", html)
-
-
-def send_proposal_ready(to_email: str, name: str, portal_link: str) -> bool:
-    html = f"""
-<div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px">
-  <h2 style="color:#1a1a2e">Your Proposal Is Ready</h2>
-  <p>Hi {name}, your project proposal is ready to review.</p>
-  <p><a href="{portal_link}" style="background:#f59e0b;color:#000;padding:10px 24px;border-radius:6px;text-decoration:none;font-weight:700">View Proposal</a></p>
-  <p style="color:#888;font-size:12px">Link expires in 7 days · J. Worden &amp; Sons · Chester, VA</p>
-</div>"""
-    return send_email(to_email, "Your Proposal from J. Worden & Sons", html)
-
-
-def send_job_update(to_email: str, name: str, status: str, address: str) -> bool:
-    status_msg = {
-        'in_progress': 'Work has started at your site.',
-        'complete': 'Your project is complete. Thank you for choosing J. Worden & Sons!',
-        'paused': "Work has been paused due to weather or scheduling. We'll resume shortly.",
-    }.get(status, f'Your job status has been updated to: {status}.')
-    html = f"""
-<div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px">
-  <h2 style="color:#1a1a2e">Job Update — {address}</h2>
-  <p>Hi {name}, {status_msg}</p>
-  <p style="color:#888;font-size:12px">J. Worden &amp; Sons · Chester, VA · (804) 524-3000</p>
-</div>"""
-    return send_email(to_email, f"Job Update — {address}", html)
-
-
-def log_send(db, to_email: str, subject: str, success: bool) -> None:
-    """Persist an EmailLog record."""
     try:
-        from ..models import EmailLog
-        log = EmailLog(
-            to_email=to_email,
-            subject=subject,
-            status='sent' if success else 'failed',
-            sent_at=datetime.now(timezone.utc) if success else None,
+        from sendgrid.helpers.mail import (  # type: ignore  # noqa: PLC0415
+            Mail,
+            Email,
+            To,
+            Content,
         )
-        db.add(log)
-        db.commit()
-    except Exception as e:
-        logger.warning('Failed to log email send: %s', e)
+    except ImportError:
+        logger.error("sendgrid.helpers.mail not available — cannot build email message.")
+        return False
+
+    message = Mail()
+    message.from_email = Email(sender_email, sender_name)
+    message.to = [To(to_email)]
+    message.subject = subject
+
+    if plain_text:
+        message.add_content(Content("text/plain", plain_text))
+    message.add_content(Content("text/html", html_body))
+
+    last_exc: Exception | None = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            response = sg.send(message)
+            status = response.status_code
+            if 200 <= status < 300:
+                logger.info(
+                    "Email sent via SendGrid: to=%s subject=%r status=%d attempt=%d",
+                    to_email,
+                    subject,
+                    status,
+                    attempt,
+                )
+                return True
+            else:
+                logger.warning(
+                    "SendGrid returned non-2xx: to=%s status=%d attempt=%d body=%s",
+                    to_email,
+                    status,
+                    attempt,
+                    getattr(response, "body", ""),
+                )
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            logger.warning(
+                "SendGrid send error (attempt %d/%d): to=%s error=%s",
+                attempt,
+                MAX_RETRIES,
+                to_email,
+                exc,
+            )
+
+        if attempt < MAX_RETRIES:
+            delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+            logger.debug("Retrying in %.1fs…", delay)
+            time.sleep(delay)
+
+    logger.error(
+        "Failed to send email after %d attempts: to=%s subject=%r last_error=%s",
+        MAX_RETRIES,
+        to_email,
+        subject,
+        last_exc,
+    )
+    return False
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+def send_quote_confirmation(lead: Any) -> bool:
+    """
+    Send a quote confirmation email to the customer.
+
+    Args:
+        lead: Lead ORM object or dict containing at minimum 'name' and 'email'.
+
+    Returns:
+        True if the email was sent successfully.
+    """
+    to_email = getattr(lead, "email", None) or lead.get("email", "")
+    if not to_email:
+        logger.warning("send_quote_confirmation: no email address on lead — skipping")
+        return False
+
+    subject, html_body, plain_text = tmpl.quote_confirmation(lead)
+    logger.info("Sending quote confirmation to %s", to_email)
+    return send_raw(
+        to_email=to_email,
+        subject=subject,
+        html_body=html_body,
+        plain_text=plain_text,
+    )
+
+
+def send_admin_notification(lead: Any) -> bool:
+    """
+    Send a new-lead notification to the admin (J. Worden).
+
+    Args:
+        lead: Lead ORM object or dict.
+
+    Returns:
+        True if the email was sent successfully.
+    """
+    admin_email = _admin_email()
+    if not admin_email:
+        logger.warning("send_admin_notification: ADMIN_NOTIFY_EMAIL not set — skipping")
+        return False
+
+    subject, html_body, plain_text = tmpl.admin_new_lead(lead)
+    lead_id = getattr(lead, "id", None) or lead.get("id", "?")
+    logger.info("Sending admin notification for lead #%s to %s", lead_id, admin_email)
+    return send_raw(
+        to_email=admin_email,
+        subject=subject,
+        html_body=html_body,
+        plain_text=plain_text,
+    )
+
+
+def send_follow_up(lead: Any, task_type: str) -> bool:
+    """
+    Send a follow-up email to a lead based on their temperature tier.
+
+    Args:
+        lead:      Lead ORM object or dict.
+        task_type: One of 'hot_1h', 'warm_3d', 'cool_7d'.
+
+    Returns:
+        True if the email was sent successfully.
+    """
+    to_email = getattr(lead, "email", None) or lead.get("email", "")
+    if not to_email:
+        logger.warning("send_follow_up: no email address on lead — skipping")
+        return False
+
+    template_map = {
+        "hot_1h": tmpl.follow_up_hot,
+        "warm_3d": tmpl.follow_up_warm,
+        "cool_7d": tmpl.follow_up_cool,
+    }
+
+    template_fn = template_map.get(task_type)
+    if template_fn is None:
+        logger.error("send_follow_up: unknown task_type=%r — skipping", task_type)
+        return False
+
+    subject, html_body, plain_text = template_fn(lead)
+    lead_id = getattr(lead, "id", None) or lead.get("id", "?")
+    logger.info(
+        "Sending %s follow-up email to %s (lead #%s)",
+        task_type,
+        to_email,
+        lead_id,
+    )
+    return send_raw(
+        to_email=to_email,
+        subject=subject,
+        html_body=html_body,
+        plain_text=plain_text,
+    )
+
+
+def send_contact_response(contact: Any) -> bool:
+    """
+    Send an auto-reply to a customer who submitted the contact form.
+
+    Args:
+        contact: ContactMessage ORM object or dict containing 'name' and 'email'.
+
+    Returns:
+        True if the email was sent successfully.
+    """
+    to_email = getattr(contact, "email", None) or contact.get("email", "")
+    if not to_email:
+        logger.warning("send_contact_response: no email address on contact — skipping")
+        return False
+
+    subject, html_body, plain_text = tmpl.contact_response(contact)
+    logger.info("Sending contact auto-reply to %s", to_email)
+    return send_raw(
+        to_email=to_email,
+        subject=subject,
+        html_body=html_body,
+        plain_text=plain_text,
+    )

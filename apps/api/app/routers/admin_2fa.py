@@ -1,118 +1,248 @@
-"""Admin 2FA — TOTP setup, verification, disable, status."""
-from __future__ import annotations
+"""
+admin_2fa.py — TOTP two-factor authentication management for the admin dashboard.
+
+All endpoints require the existing HTTP Basic admin credentials.  They are
+JSON-only (not HTML) and are excluded from the public OpenAPI schema.
+
+Routes
+------
+POST /api/v1/admin/2fa/setup    — Generate a new TOTP secret + QR code
+POST /api/v1/admin/2fa/verify   — Confirm the first token to activate 2FA
+POST /api/v1/admin/2fa/disable  — Disable 2FA (requires current password)
+GET  /api/v1/admin/2fa/status   — Check whether 2FA is currently enabled
+"""
 
 import json
+import logging
+import os
+import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..core.limiter import limiter
-from ..core.security import verify_premium_security
 from ..database import get_db
 from ..models import TwoFactorSecret
-from ..services.totp_service import (
-    generate_secret, verify_token, verify_backup_code, remaining_backup_count,
+from ..services.totp_service import TOTPService
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(
+    prefix="/api/v1/admin/2fa",
+    tags=["admin-2fa"],
+    include_in_schema=False,
 )
-from ..config import settings
 
-router = APIRouter(prefix='/admin/2fa', tags=['admin-2fa'])
-
-_2FA_LIMIT = '10/minute'   # guard TOTP verify against brute force
+security = HTTPBasic()
 
 
-def _get_or_none(db: Session, username: str) -> TwoFactorSecret | None:
-    return db.query(TwoFactorSecret).filter(TwoFactorSecret.username == username).first()
+# ── Auth dependency (mirrors admin.py) ────────────────────────────────────────
 
+def _auth_disabled() -> bool:
+    mode = os.getenv("AUTH_MODE", "required").strip().lower()
+    return mode in {"none", "off", "disabled", "0", "false"}
+
+def _require_admin(credentials: HTTPBasicCredentials = Depends(security)) -> str:
+    """Verify HTTP Basic credentials; return the username on success."""
+    if _auth_disabled():
+        return "auth_bypass"
+
+    admin_user = os.getenv("ADMIN_USERNAME", "admin").encode()
+    admin_pass = os.getenv("ADMIN_PASSWORD", "").encode()
+
+    if not admin_pass:
+        raise HTTPException(
+            status_code=503,
+            detail="Admin dashboard is not configured. Set ADMIN_PASSWORD.",
+        )
+
+    user_ok = secrets.compare_digest(credentials.username.encode(), admin_user)
+    pass_ok = secrets.compare_digest(credentials.password.encode(), admin_pass)
+
+    if not (user_ok and pass_ok):
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized",
+            headers={"WWW-Authenticate": 'Basic realm="JWordenAI Admin"'},
+        )
+    return credentials.username
+
+
+# ── Request / response schemas ────────────────────────────────────────────────
 
 class VerifyRequest(BaseModel):
-    token: str
-    username: str = 'admin'
+    token: str  # 6-digit TOTP code from the authenticator app
 
 
-class BackupVerifyRequest(BaseModel):
-    code: str
-    username: str = 'admin'
+class DisableRequest(BaseModel):
+    password: str   # Current admin password (re-confirmation)
+    token: str      # Current TOTP token OR a backup code
 
 
-@router.post('/setup', dependencies=[Depends(verify_premium_security)])
-async def setup_2fa(username: str = 'admin', db: Session = Depends(get_db)):
-    """Generate a new TOTP secret + QR code for the given admin username."""
-    data = generate_secret(username)
+class StatusResponse(BaseModel):
+    enabled: bool
+    has_backup_codes: bool
+    backup_codes_remaining: int
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _get_or_none(db: Session, user_id: str) -> TwoFactorSecret | None:
+    return db.query(TwoFactorSecret).filter(TwoFactorSecret.user_id == user_id).first()
+
+
+# ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@router.post("/setup", summary="Start 2FA setup — returns QR code and secret")
+def setup_2fa(
+    username: str = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Generate a fresh TOTP secret for the authenticated admin user.
+
+    If a record already exists it is replaced (allows re-setup after a lost
+    device).  The returned QR code should be scanned with an authenticator app.
+    2FA is **not** enforced at login until ``POST /verify`` is called with a
+    valid token.
+
+    Response fields:
+    - ``secret``      — base32 seed for manual entry
+    - ``otpauth_url`` — otpauth:// URI
+    - ``qr_code_uri`` — data:image/png;base64,… (embed directly in an <img>)
+    - ``backup_codes``— list of 10 one-time recovery codes (show once, store safely)
+    """
+    totp_data = TOTPService.generate_secret(username)
+    backup_codes = TOTPService.generate_backup_codes()
+
     existing = _get_or_none(db, username)
     if existing:
-        existing.secret = data['secret']
-        existing.backup_codes = json.dumps(data['backup_codes'])
+        existing.secret = totp_data["secret"]
+        existing.backup_codes = json.dumps(backup_codes)
         existing.enabled = False
+        logger.info("2FA secret regenerated for user=%s", username)
     else:
-        db.add(TwoFactorSecret(
-            username=username,
-            secret=data['secret'],
-            backup_codes=json.dumps(data['backup_codes']),
+        record = TwoFactorSecret(
+            user_id=username,
+            secret=totp_data["secret"],
+            backup_codes=json.dumps(backup_codes),
             enabled=False,
-        ))
+        )
+        db.add(record)
+        logger.info("2FA secret created for user=%s", username)
+
     db.commit()
+
     return {
-        'secret': data['secret'],
-        'qr_code_uri': data['qr_code_uri'],
-        'otpauth_url': data['otpauth_url'],
-        'backup_codes': data['backup_codes'],
-        'message': 'Scan QR code, then call /verify to activate 2FA.',
+        "secret": totp_data["secret"],
+        "otpauth_url": totp_data["otpauth_url"],
+        "qr_code_uri": totp_data["qr_code_uri"],
+        "backup_codes": backup_codes,
+        "message": (
+            "Scan the QR code with your authenticator app, then call POST /verify "
+            "with a valid token to activate 2FA. Store the backup codes safely — "
+            "they will not be shown again."
+        ),
     }
 
 
-@router.post('/verify', dependencies=[Depends(verify_premium_security)])
-@limiter.limit(_2FA_LIMIT)
-async def verify_and_enable(request: Request, body: VerifyRequest, db: Session = Depends(get_db)):
-    """Verify the first TOTP token and enable 2FA for this account."""
-    rec = _get_or_none(db, body.username)
-    if not rec:
-        raise HTTPException(404, '2FA not set up — call /setup first')
-    if not verify_token(rec.secret, body.token):
-        raise HTTPException(401, 'Invalid TOTP token')
-    rec.enabled = True
+@router.post("/verify", summary="Verify TOTP token to activate 2FA")
+def verify_2fa(
+    body: VerifyRequest,
+    username: str = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Confirm the first TOTP token after scanning the QR code.
+
+    A valid token activates 2FA — subsequent logins will require a TOTP code.
+    Returns ``{"enabled": true}`` on success.
+    """
+    record = _get_or_none(db, username)
+    if not record:
+        raise HTTPException(
+            status_code=404,
+            detail="No 2FA setup found. Call POST /setup first.",
+        )
+
+    if not TOTPService.verify_token(record.secret, body.token):
+        logger.warning("2FA verify failed for user=%s (bad token)", username)
+        raise HTTPException(status_code=400, detail="Invalid TOTP token. Check your authenticator app and try again.")
+
+    record.enabled = True
     db.commit()
-    return {'enabled': True, 'username': body.username}
+    logger.info("2FA enabled for user=%s", username)
+    return {"enabled": True, "message": "Two-factor authentication is now active."}
 
 
-@router.post('/disable', dependencies=[Depends(verify_premium_security)])
-@limiter.limit(_2FA_LIMIT)
-async def disable_2fa(request: Request, body: VerifyRequest, db: Session = Depends(get_db)):
-    """Disable 2FA (requires valid TOTP token to prevent lockout)."""
-    rec = _get_or_none(db, body.username)
-    if not rec or not rec.enabled:
-        raise HTTPException(400, '2FA is not enabled for this user')
-    if not verify_token(rec.secret, body.token):
-        raise HTTPException(401, 'Invalid TOTP token')
-    rec.enabled = False
+@router.post("/disable", summary="Disable 2FA (requires password + current TOTP token)")
+def disable_2fa(
+    body: DisableRequest,
+    username: str = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Disable two-factor authentication for the authenticated admin.
+
+    Requires both the current admin password and a valid TOTP token (or a
+    backup code) to prevent accidental or unauthorised disablement.
+    """
+    # Re-verify password explicitly (defence-in-depth beyond Basic auth)
+    admin_pass = os.getenv("ADMIN_PASSWORD", "")
+    if not secrets.compare_digest(body.password.encode(), admin_pass.encode()):
+        raise HTTPException(status_code=403, detail="Incorrect password.")
+
+    record = _get_or_none(db, username)
+    if not record or not record.enabled:
+        raise HTTPException(status_code=400, detail="2FA is not currently enabled.")
+
+    # Accept either a live TOTP token or a backup code
+    token_valid = TOTPService.verify_token(record.secret, body.token)
+    if not token_valid:
+        # Try backup codes
+        ok, updated_json = TOTPService.verify_backup_code(
+            record.backup_codes or "[]", body.token
+        )
+        if ok:
+            record.backup_codes = updated_json
+        else:
+            logger.warning("2FA disable rejected for user=%s (bad token/backup code)", username)
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid TOTP token or backup code.",
+            )
+
+    record.enabled = False
     db.commit()
-    return {'enabled': False, 'username': body.username}
+    logger.info("2FA disabled for user=%s", username)
+    return {"enabled": False, "message": "Two-factor authentication has been disabled."}
 
 
-@router.get('/status', dependencies=[Depends(verify_premium_security)])
-async def totp_status(username: str = 'admin', db: Session = Depends(get_db)):
-    """Return 2FA enrollment status."""
-    rec = _get_or_none(db, username)
-    if not rec:
-        return {'username': username, 'enrolled': False, 'enabled': False}
-    return {
-        'username': username,
-        'enrolled': True,
-        'enabled': rec.enabled,
-        'backup_codes_remaining': remaining_backup_count(rec.backup_codes or '[]'),
-    }
+@router.get("/status", response_model=StatusResponse, summary="Check 2FA status")
+def status_2fa(
+    username: str = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Return the current 2FA status for the authenticated admin user.
 
+    Response fields:
+    - ``enabled``               — whether 2FA is enforced at login
+    - ``has_backup_codes``      — whether any backup codes remain
+    - ``backup_codes_remaining``— count of unused backup codes
+    """
+    record = _get_or_none(db, username)
+    if not record:
+        return StatusResponse(enabled=False, has_backup_codes=False, backup_codes_remaining=0)
 
-@router.post('/backup-verify', dependencies=[Depends(verify_premium_security)])
-@limiter.limit(_2FA_LIMIT)
-async def use_backup_code(request: Request, body: BackupVerifyRequest, db: Session = Depends(get_db)):
-    """Consume a backup recovery code (one-time use)."""
-    rec = _get_or_none(db, body.username)
-    if not rec or not rec.enabled:
-        raise HTTPException(400, '2FA not enabled')
-    valid, updated_json = verify_backup_code(rec.backup_codes or '[]', body.code)
-    if not valid:
-        raise HTTPException(401, 'Invalid or already-used backup code')
-    rec.backup_codes = updated_json
-    db.commit()
-    return {'valid': True, 'codes_remaining': remaining_backup_count(updated_json)}
+    try:
+        codes: list = json.loads(record.backup_codes or "[]")
+    except (json.JSONDecodeError, TypeError):
+        codes = []
+
+    return StatusResponse(
+        enabled=record.enabled,
+        has_backup_codes=len(codes) > 0,
+        backup_codes_remaining=len(codes),
+    )

@@ -1,39 +1,32 @@
 """
 autonomy_state.py — Single source of truth for the Jarvis kill switch.
 
-Defense-in-depth: even if the frontend is compromised or bypassed, the
-backend will refuse autonomous action when frozen.
+Defense-in-depth layer 2: even if the frontend is compromised or bypassed,
+the backend will refuse autonomous action when frozen.
 
 Design:
-  - Persisted to JSON (path from JARVIS_AUTONOMY_STATE_PATH, or OS temp)
-    so freeze survives process restart.
-  - Thread-safe via a module-level lock.
+  - Persisted to a JSON file (path from env JARVIS_AUTONOMY_STATE_PATH,
+    default /tmp/jarvis_autonomy.json) so freeze survives process restart.
+  - Thread-safe via a single module-level lock.
   - Read is cheap; check before any autonomous side-effect.
   - "frozen" forces master=False and disables all per-domain switches.
 """
 from __future__ import annotations
-
 import json
 import os
 import threading
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
-_DEFAULT_PATH = (
-    str(Path.cwd() / ".runtime" / "jarvis_autonomy.json")
-    if os.name == "nt"
-    else "/tmp/jarvis_autonomy.json"
-)
-_STATE_PATH = os.environ.get("JARVIS_AUTONOMY_STATE_PATH") or _DEFAULT_PATH
+_STATE_PATH = os.environ.get("JARVIS_AUTONOMY_STATE_PATH", "/tmp/jarvis_autonomy.json")
 _LOCK = threading.Lock()
 
 _DEFAULT: dict[str, Any] = {
-    "master":    False,
-    "domains":   {},
-    "frozen":    False,
-    "frozenAt":  None,
-    "reason":    None,
+    "master":   False,
+    "domains":  {},
+    "frozen":   False,
+    "frozenAt": None,
+    "reason":   None,
     "updatedAt": None,
 }
 
@@ -55,14 +48,14 @@ def _read_disk() -> dict[str, Any]:
 
 def _write_disk(state: dict[str, Any]) -> None:
     try:
-        path = Path(_STATE_PATH)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        os.makedirs(os.path.dirname(_STATE_PATH) or ".", exist_ok=True)
         tmp = _STATE_PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(state, f)
         os.replace(tmp, _STATE_PATH)
     except OSError:
-        pass  # persistence failed — state still lives in-memory
+        # Persistence failed — state still lives in-memory for this process.
+        pass
 
 
 def get_state() -> dict[str, Any]:

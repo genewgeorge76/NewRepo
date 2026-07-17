@@ -1,190 +1,243 @@
-"""Workforce — employee CRUD, cert tracking, expiry alerts."""
-from __future__ import annotations
+"""
+workforce.py — Crew & Skills Matrix router for JWordenAI.
+
+Routes:
+  GET    /api/v1/workforce                   — list workforce members
+  POST   /api/v1/workforce                   — add member
+  PUT    /api/v1/workforce/{id}              — update member
+  DELETE /api/v1/workforce/{id}              — remove member
+  GET    /api/v1/workforce/available         — query available + qualified members
+  GET    /api/v1/workforce/expiring-certs    — members with expiring certifications
+"""
 
 import json
-import uuid
+import logging
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from ..core.limiter import limiter
 from ..core.security import verify_premium_security
 from ..database import get_db
 from ..models import WorkforceMember
 
-router = APIRouter(prefix='/workforce', tags=['workforce'])
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/v1/workforce", tags=["workforce"])
 
 
-class MemberCreate(BaseModel):
+# ── Schemas ───────────────────────────────────────────────────────────────────
+
+class WorkforceCreate(BaseModel):
     name: str
-    role: str
-    email: str | None = None
-    phone: str | None = None
-    skills: list[str] | None = None
-    certifications: list[dict] | None = None   # [{name, expiry}]
-    license_number: str | None = None
-    license_expiry: str | None = None
-    osha_card_expiry: str | None = None
-    hire_date: str | None = None
-    hourly_rate: float | None = None
-    notes: str | None = None
+    member_type: str          # employee | sub
+    trade: Optional[str] = None
+    certifications: Optional[list] = None   # [{cert: str, expiry_date: str}]
+    skill_ratings: Optional[dict] = None    # {trade: 1-5}
+    available: int = 1
+    subcontractor_id: Optional[int] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    notes: Optional[str] = None
 
 
-class MemberUpdate(BaseModel):
-    name: str | None = None
-    role: str | None = None
-    status: str | None = None
-    email: str | None = None
-    phone: str | None = None
-    skills: list[str] | None = None
-    certifications: list[dict] | None = None
-    license_number: str | None = None
-    license_expiry: str | None = None
-    osha_card_expiry: str | None = None
-    hourly_rate: float | None = None
-    notes: str | None = None
+class WorkforceUpdate(WorkforceCreate):
+    name: Optional[str] = None
+    member_type: Optional[str] = None
 
 
-def _parse_dt(s: str | None) -> datetime | None:
-    if not s:
-        return None
-    try:
-        return datetime.fromisoformat(s.replace('Z', '+00:00'))
-    except ValueError:
-        return None
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-
-def _serialize(m: WorkforceMember) -> dict:
+def _member_dict(m: WorkforceMember) -> dict:
+    certs = json.loads(m.certifications) if m.certifications else []
+    ratings = json.loads(m.skill_ratings) if m.skill_ratings else {}
     return {
-        'id': m.id,
-        'name': m.name,
-        'role': m.role,
-        'status': m.status,
-        'email': m.email,
-        'phone': m.phone,
-        'skills': json.loads(m.skills) if m.skills else [],
-        'certifications': json.loads(m.certifications) if m.certifications else [],
-        'license_number': m.license_number,
-        'license_expiry': m.license_expiry.isoformat() if m.license_expiry else None,
-        'osha_card_expiry': m.osha_card_expiry.isoformat() if m.osha_card_expiry else None,
-        'hire_date': m.hire_date.isoformat() if m.hire_date else None,
-        'hourly_rate': m.hourly_rate,
-        'notes': m.notes,
-        'created_at': m.created_at.isoformat(),
+        "id": m.id,
+        "name": m.name,
+        "member_type": m.member_type,
+        "trade": m.trade,
+        "certifications": certs,
+        "skill_ratings": ratings,
+        "available": bool(m.available),
+        "subcontractor_id": m.subcontractor_id,
+        "phone": m.phone,
+        "email": m.email,
+        "notes": m.notes,
+        "created_at": m.created_at.isoformat(),
+        "updated_at": m.updated_at.isoformat(),
     }
 
 
-@router.post('/', dependencies=[Depends(verify_premium_security)])
-async def create_member(body: MemberCreate, db: Session = Depends(get_db)):
+def _cert_expiry_status(cert: dict, now: datetime) -> str:
+    """Return 'expired', 'soon' (<30d), 'warning' (<90d), or 'ok'."""
+    expiry_str = cert.get("expiry_date")
+    if not expiry_str:
+        return "ok"
+    try:
+        expiry = datetime.fromisoformat(expiry_str.replace("Z", "+00:00"))
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        days_left = (expiry - now).days
+        if days_left < 0:
+            return "expired"
+        if days_left <= 30:
+            return "soon"
+        if days_left <= 90:
+            return "warning"
+        return "ok"
+    except Exception:  # noqa: BLE001
+        return "ok"
+
+
+# ── List / CRUD ───────────────────────────────────────────────────────────────
+
+@router.get("", summary="List workforce members")
+@limiter.limit("60/minute")
+async def list_workforce(
+    request: Request,
+    member_type: Optional[str] = Query(default=None),
+    trade: Optional[str] = Query(default=None),
+    available: Optional[int] = Query(default=None),
+    db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
+):
+    q = db.query(WorkforceMember)
+    if member_type:
+        q = q.filter(WorkforceMember.member_type == member_type)
+    if trade:
+        q = q.filter(WorkforceMember.trade.ilike(f"%{trade}%"))
+    if available is not None:
+        q = q.filter(WorkforceMember.available == available)
+    rows = q.order_by(WorkforceMember.name.asc()).all()
+    return {"total": len(rows), "members": [_member_dict(m) for m in rows]}
+
+
+@router.post("", summary="Add a workforce member")
+@limiter.limit("30/minute")
+async def create_member(
+    request: Request,
+    req: WorkforceCreate,
+    db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
+):
     m = WorkforceMember(
-        id=str(uuid.uuid4()),
-        name=body.name,
-        role=body.role,
-        email=body.email,
-        phone=body.phone,
-        skills=json.dumps(body.skills or []),
-        certifications=json.dumps(body.certifications or []),
-        license_number=body.license_number,
-        license_expiry=_parse_dt(body.license_expiry),
-        osha_card_expiry=_parse_dt(body.osha_card_expiry),
-        hire_date=_parse_dt(body.hire_date),
-        hourly_rate=body.hourly_rate,
-        notes=body.notes,
+        name=req.name,
+        member_type=req.member_type,
+        trade=req.trade,
+        certifications=json.dumps(req.certifications or []),
+        skill_ratings=json.dumps(req.skill_ratings or {}),
+        available=req.available,
+        subcontractor_id=req.subcontractor_id,
+        phone=req.phone,
+        email=req.email,
+        notes=req.notes,
     )
     db.add(m)
     db.commit()
     db.refresh(m)
-    return _serialize(m)
+    return {"status": "created", **_member_dict(m)}
 
 
-@router.get('/', dependencies=[Depends(verify_premium_security)])
-async def list_members(
-    status: str | None = None,
-    role: str | None = None,
+@router.put("/{member_id}", summary="Update a workforce member")
+@limiter.limit("30/minute")
+async def update_member(
+    request: Request,
+    member_id: int,
+    req: WorkforceUpdate,
     db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
 ):
-    q = db.query(WorkforceMember)
-    if status:
-        q = q.filter(WorkforceMember.status == status)
-    if role:
-        q = q.filter(WorkforceMember.role.ilike(f'%{role}%'))
-    members = q.order_by(WorkforceMember.name).all()
-    return {'members': [_serialize(m) for m in members], 'total': len(members)}
-
-
-@router.get('/expiring-certs', dependencies=[Depends(verify_premium_security)])
-async def expiring_certs(days: int = 30, db: Session = Depends(get_db)):
-    """Return members with licenses or OSHA cards expiring within `days` days."""
-    cutoff = datetime.now(timezone.utc) + timedelta(days=days)
-    alerts = []
-    members = db.query(WorkforceMember).filter(WorkforceMember.status == 'active').all()
-    for m in members:
-        if m.license_expiry and m.license_expiry <= cutoff:
-            alerts.append({'member_id': m.id, 'name': m.name, 'cert': 'Contractor License', 'expiry': m.license_expiry.isoformat()})
-        if m.osha_card_expiry and m.osha_card_expiry <= cutoff:
-            alerts.append({'member_id': m.id, 'name': m.name, 'cert': 'OSHA Card', 'expiry': m.osha_card_expiry.isoformat()})
-        certs = json.loads(m.certifications or '[]')
-        for cert in certs:
-            exp_str = cert.get('expiry')
-            if exp_str:
-                try:
-                    exp = datetime.fromisoformat(exp_str.replace('Z', '+00:00'))
-                    if exp <= cutoff:
-                        alerts.append({'member_id': m.id, 'name': m.name, 'cert': cert.get('name', 'Unknown'), 'expiry': exp.isoformat()})
-                except ValueError:
-                    pass
-    alerts.sort(key=lambda x: x['expiry'])
-    return {'alerts': alerts, 'count': len(alerts)}
-
-
-@router.get('/{member_id}', dependencies=[Depends(verify_premium_security)])
-async def get_member(member_id: str, db: Session = Depends(get_db)):
-    m = db.query(WorkforceMember).filter(WorkforceMember.id == member_id).first()
+    m = db.get(WorkforceMember, member_id)
     if not m:
-        raise HTTPException(status_code=404, detail='Member not found')
-    return _serialize(m)
-
-
-@router.patch('/{member_id}', dependencies=[Depends(verify_premium_security)])
-async def update_member(member_id: str, body: MemberUpdate, db: Session = Depends(get_db)):
-    m = db.query(WorkforceMember).filter(WorkforceMember.id == member_id).first()
-    if not m:
-        raise HTTPException(status_code=404, detail='Member not found')
-    if body.name is not None:
-        m.name = body.name
-    if body.role is not None:
-        m.role = body.role
-    if body.status is not None:
-        m.status = body.status
-    if body.email is not None:
-        m.email = body.email
-    if body.phone is not None:
-        m.phone = body.phone
-    if body.skills is not None:
-        m.skills = json.dumps(body.skills)
-    if body.certifications is not None:
-        m.certifications = json.dumps(body.certifications)
-    if body.license_number is not None:
-        m.license_number = body.license_number
-    if body.license_expiry is not None:
-        m.license_expiry = _parse_dt(body.license_expiry)
-    if body.osha_card_expiry is not None:
-        m.osha_card_expiry = _parse_dt(body.osha_card_expiry)
-    if body.hourly_rate is not None:
-        m.hourly_rate = body.hourly_rate
-    if body.notes is not None:
-        m.notes = body.notes
+        raise HTTPException(status_code=404, detail="Member not found")
+    data = req.model_dump(exclude_none=True)
+    for key, val in data.items():
+        if key == "certifications":
+            m.certifications = json.dumps(val)
+        elif key == "skill_ratings":
+            m.skill_ratings = json.dumps(val)
+        else:
+            setattr(m, key, val)
+    m.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(m)
-    return _serialize(m)
+    return {"status": "updated", **_member_dict(m)}
 
 
-@router.delete('/{member_id}', dependencies=[Depends(verify_premium_security)])
-async def terminate_member(member_id: str, db: Session = Depends(get_db)):
-    m = db.query(WorkforceMember).filter(WorkforceMember.id == member_id).first()
+@router.delete("/{member_id}", summary="Remove a workforce member")
+@limiter.limit("30/minute")
+async def delete_member(
+    request: Request,
+    member_id: int,
+    db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
+):
+    m = db.get(WorkforceMember, member_id)
     if not m:
-        raise HTTPException(status_code=404, detail='Member not found')
-    m.status = 'terminated'
+        raise HTTPException(status_code=404, detail="Member not found")
+    db.delete(m)
     db.commit()
-    return {'member_id': member_id, 'status': 'terminated'}
+    return {"status": "deleted", "id": member_id}
+
+
+# ── Available + qualified query ───────────────────────────────────────────────
+
+@router.get("/available", summary="Query available and qualified workforce")
+@limiter.limit("30/minute")
+async def available_query(
+    request: Request,
+    scope: str = Query(default=""),
+    db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
+):
+    """Return available members qualified for the given scope/trade."""
+    q = db.query(WorkforceMember).filter(WorkforceMember.available == 1)
+    if scope:
+        q = q.filter(WorkforceMember.trade.ilike(f"%{scope}%"))
+    rows = q.order_by(WorkforceMember.name.asc()).all()
+    return {"scope": scope, "count": len(rows), "members": [_member_dict(m) for m in rows]}
+
+
+# ── Expiring certifications ───────────────────────────────────────────────────
+
+@router.get("/expiring-certs", summary="Members with expiring certifications")
+@limiter.limit("30/minute")
+async def expiring_certs(
+    request: Request,
+    days_ahead: int = Query(default=90, ge=1, le=365),
+    db: Session = Depends(get_db),
+    _: dict = Depends(verify_premium_security),
+):
+    now = datetime.now(timezone.utc)
+    cutoff = now + timedelta(days=days_ahead)
+    rows = db.query(WorkforceMember).all()
+
+    alerts = []
+    for m in rows:
+        certs = json.loads(m.certifications) if m.certifications else []
+        for cert in certs:
+            status = _cert_expiry_status(cert, now)
+            if status in ("expired", "soon", "warning"):
+                expiry_str = cert.get("expiry_date", "")
+                try:
+                    expiry = datetime.fromisoformat(expiry_str.replace("Z", "+00:00"))
+                    if expiry.tzinfo is None:
+                        expiry = expiry.replace(tzinfo=timezone.utc)
+                    if expiry <= cutoff:
+                        alerts.append({
+                            "member_id": m.id,
+                            "member_name": m.name,
+                            "trade": m.trade,
+                            "cert": cert.get("cert"),
+                            "expiry_date": expiry_str,
+                            "status": status,
+                            "days_left": (expiry - now).days,
+                        })
+                except Exception:  # noqa: BLE001
+                    pass
+
+    alerts.sort(key=lambda x: x["days_left"])
+    return {"count": len(alerts), "days_ahead": days_ahead, "alerts": alerts}

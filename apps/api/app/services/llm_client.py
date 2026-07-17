@@ -1,46 +1,55 @@
 """
-llm_client.py — Unified multi-provider LLM router.
+llm_client.py — Unified multi-provider LLM router for J. Worden & Sons.
 
 This is the single source of truth for every AI call in the backend.
-Every service (ai_engine, ai_foreman, math_ai_service, vision_takeoff,
-lead_qualifier, etc.) MUST go through `chat()` here — never instantiate
-a provider SDK directly.
+Every other service (ai_engine, analytics_ai, proposal_generator,
+review_responder, vision_takeoff, math_ai_service, national_permits,
+material_prices, the Jarvis command-center assistant, etc.) MUST go
+through `chat()` here — never instantiate a provider SDK directly.
 
-────────────────────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────────────────────────
 Routing philosophy
-────────────────────────────────────────────────────────────────────────
-Every model has ONE job it does better than the others.
+────────────────────────────────────────────────────────────────────────────
+Every model has ONE job it does better than the others. No redundancy.
 
-  TASK                → PRIMARY                        → FALLBACK
-  ────────────────────────────────────────────────────────────────────
-  jarvis              → claude-sonnet-4-6              → gpt-4o → grok-4 → gemini-2.5-pro
-  reasoning/persona   → claude-sonnet-4-6              → gpt-4o
-  proposals/contracts → claude-sonnet-4-6              → gpt-4o
-  legal/compliance    → claude-opus-4-6                → claude-sonnet-4-6
-  vision              → gpt-4o                         → gemini-2.5-pro
-  math/long_context   → gemini-2.5-pro                 → claude-sonnet-4-6
-  web_research        → perplexity-sonar-pro            → gpt-4o
-  social_signal (X)   → grok-4                         → (none)
-  fast/classification → gpt-4o-mini                    → claude-haiku-4-5-20251001
-  city_authority      → gemini-2.5-flash               → gpt-4o
+  TASK                    → PRIMARY                          → FALLBACK
+  ──────────────────────────────────────────────────────────────────────
+    jarvis                  → claude-sonnet-4-6                → gpt-4o → grok-4 → gemini-2.5-pro → claude-opus-4-6
+  reasoning / persona     → claude-sonnet-4-6                → gpt-4o
+  proposals / contracts   → claude-sonnet-4-6                → gpt-4o
+  review_reply            → claude-sonnet-4-6                → gpt-4o
+  legal / compliance      → claude-opus-4-6                  → claude-sonnet-4-6
+  vision                  → gpt-4o                           → gemini-2.5-pro
+  math / long_context     → gemini-2.5-pro                   → claude-sonnet-4-6
+  web_research            → perplexity-sonar-pro             → gpt-4o
+  social_signal (X)       → grok-4                           → (none)
+    fast / classification   → gpt-4o-mini                      → claude-sonnet-4-6
+  analytics               → claude-sonnet-4-6                → gpt-4o
 
-────────────────────────────────────────────────────────────────────────
+Note on Opus 4.6 vs 4.7: 4.6 is the default because 4.7's updated tokenizer
+can produce up to ~35% more tokens for the same input → higher effective
+cost. Set JARVIS_MODEL_OVERRIDE=claude-opus-4-7 to upgrade Jarvis only.
+
+────────────────────────────────────────────────────────────────────────────
 Environment variables (set in Railway → Variables)
-────────────────────────────────────────────────────────────────────────
-  ANTHROPIC_API_KEY     — Claude models
-  OPENAI_API_KEY        — GPT-4o / GPT-4o-mini
-  GOOGLE_API_KEY        — Gemini 2.5 Pro / Flash (also accepts GEMINI_API_KEY)
-  PERPLEXITY_API_KEY    — Sonar Pro (live web + citations)
-  XAI_API_KEY           — Grok 4 (X firehose)
-  LLM_FALLBACK_SILENT   — "1" (default): silently fall through on error
-  JARVIS_MAX_TIER       — "opus" (default) | "sonnet" — caps Jarvis spend
-  JARVIS_MODEL_OVERRIDE — Override model for jarvis/persona lanes
-  JARVIS_DISABLE_GEMINI — "1" disables Google in jarvis lanes
-  LLM_DISABLED_PROVIDERS — Comma-separated provider denylist, e.g. "google,xai"
+────────────────────────────────────────────────────────────────────────────
+  OPENAI_API_KEY        — OpenAI (GPT-4o, GPT-4o-mini, embeddings)
+  ANTHROPIC_API_KEY     — Anthropic (Claude Opus 4, Sonnet 4.5, Haiku 4)
+  GOOGLE_API_KEY        — Google AI Studio (Gemini 2.5 Pro)
+  PERPLEXITY_API_KEY    — Perplexity (Sonar Pro — live web + citations)
+  XAI_API_KEY           — xAI (Grok 4 — X firehose)
+  LLM_FALLBACK_SILENT   — "1" (default): silently fall through on error.
+                           "0": raise on primary failure.
+  JARVIS_MAX_TIER       — "opus" (default) | "sonnet". Caps Jarvis spend.
+    JARVIS_MODEL_OVERRIDE — Optional model name for jarvis/persona/jarvis_fast,
+                                                     e.g. "claude-opus-4-7" or "gpt-4o".
+    JARVIS_DISABLE_GEMINI — "1" disables Google/Gemini in jarvis lanes only.
+    LLM_DISABLED_PROVIDERS — Comma-separated global provider denylist,
+                                                     e.g. "google,xai".
 
 Missing keys are tolerated — the router falls through to the next
-configured provider, then returns ("", error=True). Callers MUST check
-`error` and degrade gracefully (most already do via stub paths).
+configured provider, then finally returns ("", error=True). Callers MUST
+check `error` and degrade gracefully (most already do via stub paths).
 """
 
 from __future__ import annotations
@@ -50,7 +59,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from . import runtime_config as _cfg
+from app.services import runtime_config as _cfg
 
 logger = logging.getLogger(__name__)
 
@@ -58,22 +67,22 @@ logger = logging.getLogger(__name__)
 # Order = preference. Router tries left-to-right until one succeeds.
 
 _ROUTES: dict[str, list[tuple[str, str]]] = {
-    "jarvis":         [("anthropic", "claude-sonnet-4-6"),   ("openai", "gpt-4o"),              ("xai", "grok-4"),           ("google", "gemini-2.5-pro"),  ("anthropic", "claude-opus-4-6")],
-    "jarvis_fast":    [("openai", "gpt-4o-mini"),            ("anthropic", "claude-sonnet-4-6"), ("xai", "grok-4"),           ("google", "gemini-2.5-pro"),  ("openai", "gpt-4o")],
-    "reasoning":      [("anthropic", "claude-sonnet-4-6"),   ("openai", "gpt-4o")],
-    "persona":        [("anthropic", "claude-sonnet-4-6"),   ("openai", "gpt-4o")],
-    "proposal":       [("anthropic", "claude-sonnet-4-6"),   ("openai", "gpt-4o")],
-    "review_reply":   [("anthropic", "claude-sonnet-4-6"),   ("openai", "gpt-4o")],
-    "legal":          [("anthropic", "claude-opus-4-6"),     ("anthropic", "claude-sonnet-4-6"), ("openai", "gpt-4o")],
-    "vision":         [("openai", "gpt-4o"),                 ("google", "gemini-2.5-pro")],
-    "math":           [("google", "gemini-2.5-pro"),         ("anthropic", "claude-sonnet-4-6"), ("openai", "gpt-4o")],
-    "long_context":   [("google", "gemini-2.5-pro"),         ("anthropic", "claude-sonnet-4-6")],
-    "web_research":   [("perplexity", "sonar-pro"),          ("openai", "gpt-4o")],
-    "social_signal":  [("xai", "grok-4")],
-    "fast":           [("openai", "gpt-4o-mini"),            ("anthropic", "claude-haiku-4-5-20251001")],
-    "classification": [("openai", "gpt-4o-mini"),            ("anthropic", "claude-haiku-4-5-20251001")],
-    "analytics":      [("anthropic", "claude-sonnet-4-6"),   ("openai", "gpt-4o")],
-    "city_authority": [("google", "gemini-2.5-flash"),       ("openai", "gpt-4o")],
+    # task             provider_chain (provider, model)
+    "jarvis":          [("anthropic", "claude-sonnet-4-6"),   ("openai", "gpt-4o"),               ("xai", "grok-4"),                  ("google", "gemini-2.5-pro"),        ("anthropic", "claude-opus-4-6")],
+    "jarvis_fast":     [("openai", "gpt-4o-mini"),            ("anthropic", "claude-sonnet-4-6"), ("xai", "grok-4"),                  ("google", "gemini-2.5-pro"),        ("openai", "gpt-4o")],
+    "reasoning":       [("anthropic", "claude-sonnet-4-6"),   ("openai", "gpt-4o")],
+    "persona":         [("anthropic", "claude-sonnet-4-6"),   ("openai", "gpt-4o")],
+    "proposal":        [("anthropic", "claude-sonnet-4-6"),   ("openai", "gpt-4o")],
+    "review_reply":    [("anthropic", "claude-sonnet-4-6"),   ("openai", "gpt-4o")],
+    "legal":           [("anthropic", "claude-opus-4-6"),     ("anthropic", "claude-sonnet-4-6"), ("openai", "gpt-4o")],
+    "vision":          [("openai", "gpt-4o"),                 ("google", "gemini-2.5-pro")],
+    "math":            [("google", "gemini-2.5-pro"),         ("anthropic", "claude-sonnet-4-6"), ("openai", "gpt-4o")],
+    "long_context":    [("google", "gemini-2.5-pro"),         ("anthropic", "claude-sonnet-4-6")],
+    "web_research":    [("perplexity", "sonar-pro"),          ("openai", "gpt-4o")],
+    "social_signal":   [("xai", "grok-4")],
+    "fast":            [("openai", "gpt-4o-mini"),            ("anthropic", "claude-haiku-4-5-20251001")],
+    "classification":  [("openai", "gpt-4o-mini"),            ("anthropic", "claude-haiku-4-5-20251001")],
+    "analytics":       [("anthropic", "claude-sonnet-4-6"),   ("openai", "gpt-4o")],
 }
 
 _DEFAULT_TASK = "reasoning"
@@ -107,6 +116,7 @@ def _jarvis_model_override() -> str:
 
 
 def _jarvis_disable_gemini() -> bool:
+    # Keep backward compatibility in case older deployments used GOOGLE wording.
     return _env_flag("JARVIS_DISABLE_GEMINI") or _env_flag("JARVIS_DISABLE_GOOGLE")
 
 
@@ -130,12 +140,14 @@ def _provider_for_model(model: str) -> Optional[str]:
 def _resolved_chain(task: str) -> list[tuple[str, str]]:
     chain = list(_ROUTES.get(task) or _ROUTES[_DEFAULT_TASK])
 
+    # Jarvis spend cap: optionally downgrade Opus → Sonnet.
     if task == "jarvis" and _jarvis_cap() == "sonnet":
         chain = [(p, m.replace("claude-opus-4-6", "claude-sonnet-4-6")) for p, m in chain]
 
     if task in {"jarvis", "jarvis_fast", "persona"}:
         if _jarvis_disable_gemini():
             chain = [(p, m) for p, m in chain if p != "google"]
+
         model = _jarvis_model_override()
         if model:
             provider = _provider_for_model(model)
@@ -148,6 +160,7 @@ def _resolved_chain(task: str) -> list[tuple[str, str]]:
     if disabled:
         chain = [(p, m) for p, m in chain if p not in disabled]
 
+    # Deduplicate exact entries while preserving order.
     deduped: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for pair in chain:
@@ -163,8 +176,8 @@ def _resolved_chain(task: str) -> list[tuple[str, str]]:
 @dataclass
 class LLMResponse:
     text: str
-    provider: str        # "openai" | "anthropic" | "google" | "perplexity" | "xai" | "none"
-    model: str           # actual model name used
+    provider: str       # "openai" | "anthropic" | "google" | "perplexity" | "xai" | "none"
+    model: str          # actual model name used
     error: bool = False
     fallback_used: bool = False
     error_detail: Optional[str] = None
@@ -212,7 +225,8 @@ def _get_anthropic() -> Any:
 
 
 def _google_key() -> str:
-    return (_cfg.get("GOOGLE_API_KEY") or "").strip() or (_cfg.get("GEMINI_API_KEY") or "").strip()
+    # Backward-compatible key resolution: support both naming conventions.
+    return _cfg.get("GOOGLE_API_KEY").strip() or _cfg.get("GEMINI_API_KEY").strip()
 
 
 def _get_google() -> Any:
@@ -232,6 +246,7 @@ def _get_google() -> Any:
 
 
 def _get_perplexity() -> Any:
+    """Perplexity uses an OpenAI-compatible endpoint."""
     global _perplexity_client
     if _perplexity_client is not None:
         return _perplexity_client
@@ -248,6 +263,7 @@ def _get_perplexity() -> Any:
 
 
 def _get_xai() -> Any:
+    """xAI (Grok) uses an OpenAI-compatible endpoint."""
     global _xai_client
     if _xai_client is not None:
         return _xai_client
@@ -300,6 +316,7 @@ def _call_anthropic(
 ) -> str:
     msgs: list[dict] = []
     if history:
+        # Anthropic accepts the same role/content shape, but only user/assistant.
         for m in history:
             role = m.get("role")
             if role in ("user", "assistant"):
@@ -312,6 +329,7 @@ def _call_anthropic(
         max_tokens=max_tokens,
         temperature=temperature,
     )
+    # Anthropic returns a list of content blocks
     parts = []
     for block in getattr(resp, "content", []) or []:
         text = getattr(block, "text", None)
@@ -329,17 +347,21 @@ def _call_google(
     max_tokens: int,
     temperature: float,
 ) -> str:
+    # google-genai SDK — pack system into the prompt prefix; history flattened.
     prefix = f"{system}\n\n" if system else ""
     convo = ""
     if history:
         for m in history:
             r = m.get("role", "user").upper()
-            convo += f"{r}: {m.get('content', '')}\n"
+            convo += f"{r}: {m.get('content','')}\n"
     full = f"{prefix}{convo}USER: {user}".strip()
     resp = client.models.generate_content(
         model=model,
         contents=full,
-        config={"max_output_tokens": max_tokens, "temperature": temperature},
+        config={
+            "max_output_tokens": max_tokens,
+            "temperature": temperature,
+        },
     )
     return (getattr(resp, "text", "") or "").strip()
 
@@ -406,15 +428,16 @@ def chat(
     fallback through the rest of the provider chain.
 
     Args:
-      task:              routing key — see _ROUTES table above.
-      system:            system prompt.
-      user:              user message.
-      history:           optional [{"role": "user"|"assistant", "content": str}, ...]
-      max_tokens:        output token cap.
-      temperature:       sampling temperature.
-      provider_override: skip routing; force this provider.
-      model_override:    pair with provider_override to force a specific model.
+      task:             routing key — see _ROUTES at top of file.
+      system:           system prompt.
+      user:             user message.
+      history:          optional [{"role": "user"|"assistant", "content": str}, ...]
+      max_tokens:       output cap.
+      temperature:      sampling temperature.
+      provider_override: skip routing table; force this provider.
+      model_override:   pair with provider_override to force a specific model.
     """
+    # Direct override path (e.g. for one-off experiments or admin tools)
     if provider_override:
         text, err = _try_provider(
             provider_override,

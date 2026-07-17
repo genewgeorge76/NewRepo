@@ -1,158 +1,211 @@
-"""Auth — JWT token issuance, master-key exchange, PIN fallback, revocation, 2FA enforcement."""
-from __future__ import annotations
+"""
+auth.py — JWT token issuance endpoint for JWordenAI.
 
-import hmac
-import json
-import uuid
+Routes:
+  POST /api/v1/auth/token — exchange master key for a short-lived JWT
+
+The frontend (or any API client) can POST the master key in the Authorization
+header to receive a 24-hour JWT.  Subsequent requests use that JWT instead of
+the raw master key, which limits exposure of the long-lived credential.
+
+Flow:
+  1. Client sends:  Authorization: Bearer <JWORDEN_MASTER_KEY>
+  2. Server validates the master key.
+  3. Server returns a signed JWT (HS256, 24 h expiry).
+  4. Client uses the JWT for all subsequent authenticated requests.
+"""
+
+import logging
+import os
+import hashlib
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from jose import JWTError, jwt
+from fastapi import APIRouter, Depends, HTTPException, Security
+from fastapi.security import OAuth2PasswordBearer
+from jose import jwt
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..config import settings
-from ..core.limiter import limiter
 from ..database import get_db
-from ..models import AuditEvent, RevokedToken, TwoFactorSecret
+from ..services.audit import write_audit_event
 
-router = APIRouter(prefix='/auth', tags=['auth'])
+logger = logging.getLogger(__name__)
 
-_TOKEN_EXPIRE_HOURS = 24
+router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
+_ALGORITHM = "HS256"
+_TOKEN_EXPIRE_SECONDS = 86_400  # 24 hours
 
-def _issue_jwt(sub: str, tenant_id: str = 'JWORDEN_HQ') -> str:
-    now = datetime.now(timezone.utc)
-    payload = {
-        'sub': sub,
-        'tenant_id': tenant_id,
-        'jti': uuid.uuid4().hex,
-        'iat': int(now.timestamp()),
-        'exp': int((now + timedelta(hours=_TOKEN_EXPIRE_HOURS)).timestamp()),
-    }
-    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token", auto_error=False)
 
 
-def decode_jwt(token: str) -> dict:
-    return jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+def _secret_fingerprint(value: str) -> str:
+    if not value:
+        return "unset"
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+    return f"len={len(value)} sha256={digest}"
 
 
-def is_token_revoked(db: Session, jti: Optional[str]) -> bool:
-    """True if the token's jti is on the blocklist. Tokens without jti (pre-Wave-9) can't be revoked."""
-    if not jti:
-        return False
-    return db.query(RevokedToken).filter(RevokedToken.jti == jti).first() is not None
-
-
-def _log_audit(db: Session, actor: str, action: str, ip: str | None = None, detail: dict | None = None) -> None:
-    try:
-        db.add(AuditEvent(actor=actor, action=action, ip_address=ip, detail=json.dumps(detail or {})))
-        db.commit()
-    except Exception:
-        pass
-
-
-def _enforce_2fa(db: Session, username: str, totp_code: Optional[str]) -> None:
-    """If a 2FA secret is enrolled and enabled for this user, a valid TOTP code is mandatory."""
-    record = (
-        db.query(TwoFactorSecret)
-        .filter(TwoFactorSecret.username == username, TwoFactorSecret.enabled.is_(True))
-        .first()
-    )
-    if record is None:
-        return
-    if not totp_code:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='2FA code required')
-    from ..services.totp_service import verify_backup_code, verify_token
-    if verify_token(record.secret, totp_code):
-        return
-    ok, remaining_json = verify_backup_code(record.backup_codes or '[]', totp_code)
-    if ok:
-        record.backup_codes = remaining_json
-        db.commit()
-        return
-    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid 2FA code')
-
-
-class TokenRequest(BaseModel):
-    master_key: str
-    totp_code: Optional[str] = None
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int = _TOKEN_EXPIRE_SECONDS
 
 
 class PinTokenRequest(BaseModel):
     pin: str
-    totp_code: Optional[str] = None
 
 
-class RevokeRequest(BaseModel):
-    token: Optional[str] = None  # revoke this token; defaults to the bearer token used
+class AuthStatusResponse(BaseModel):
+    auth_required: bool
+    auth_mode: str
+    token_endpoint: str | None = None
+    admin_configured: bool
 
 
-@router.post('/token')
-@limiter.limit('10/minute')
-async def issue_token(request: Request, body: TokenRequest, db: Session = Depends(get_db)):
-    """Exchange master key for a 24-hour JWT. Requires TOTP when 2FA is enrolled."""
-    if not hmac.compare_digest(body.master_key.encode(), settings.jworden_master_key.encode()):
-        _log_audit(db, 'anonymous', 'auth.token.failed', request.client.host if request.client else None)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid master key')
-    _enforce_2fa(db, 'admin', body.totp_code)
-    token = _issue_jwt('Admin')
-    _log_audit(db, 'Admin', 'auth.token.issued', request.client.host if request.client else None)
-    return {'access_token': token, 'token_type': 'bearer', 'expires_in': _TOKEN_EXPIRE_HOURS * 3600}
+def _auth_mode() -> str:
+    return os.getenv("AUTH_MODE", "required").strip().lower()
 
 
-@router.post('/pin-token')
-@limiter.limit('5/minute')
-async def issue_pin_token(request: Request, body: PinTokenRequest, db: Session = Depends(get_db)):
-    """PIN-based auth fallback (4-digit PIN stored in ADMIN_PIN env var). Requires TOTP when 2FA is enrolled."""
-    if not settings.admin_pin or not hmac.compare_digest(body.pin.encode(), settings.admin_pin.encode()):
-        _log_audit(db, 'anonymous', 'auth.pin.failed', request.client.host if request.client else None)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid PIN')
-    _enforce_2fa(db, 'admin', body.totp_code)
-    token = _issue_jwt('Admin-PIN')
-    _log_audit(db, 'Admin-PIN', 'auth.pin.issued', request.client.host if request.client else None)
-    return {'access_token': token, 'token_type': 'bearer', 'expires_in': _TOKEN_EXPIRE_HOURS * 3600}
+def _issue_admin_jwt() -> str:
+    secret = os.getenv("JWT_SECRET_KEY", "")
+    if not secret:
+        raise HTTPException(
+            status_code=500,
+            detail="JWT signing is not configured. Set JWT_SECRET_KEY.",
+        )
+
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": "Admin",
+        "tenant_id": "JWORDEN_HQ",
+        "iat": now,
+        "exp": now + timedelta(seconds=_TOKEN_EXPIRE_SECONDS),
+    }
+    return jwt.encode(payload, secret, algorithm=_ALGORITHM)
 
 
-@router.post('/revoke')
-@limiter.limit('10/minute')
-async def revoke_token(request: Request, body: RevokeRequest, db: Session = Depends(get_db)):
-    """Revoke a JWT (the bearer token by default). Revoked tokens fail /auth/status immediately."""
-    auth_header = request.headers.get('Authorization', '')
-    bearer = auth_header.split(' ', 1)[1] if auth_header.startswith('Bearer ') else None
-    target = body.token or bearer
-    if not target:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='No token supplied')
-    try:
-        payload = decode_jwt(target)
-    except JWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid token')
-    jti = payload.get('jti')
-    if not jti:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Token has no jti and cannot be revoked; rotate JWT_SECRET_KEY instead')
-    if not is_token_revoked(db, jti):
-        db.add(RevokedToken(
-            jti=jti,
-            token_type='portal' if payload.get('type') == 'portal' else 'admin',
-            expires_at=datetime.fromtimestamp(payload['exp'], tz=timezone.utc) if payload.get('exp') else None,
-        ))
-        db.commit()
-    _log_audit(db, str(payload.get('sub', 'unknown')), 'auth.token.revoked', request.client.host if request.client else None, {'jti': jti})
-    return {'revoked': True, 'jti': jti}
+@router.get(
+    "/status",
+    summary="Return server-auth configuration for frontend bootstrapping",
+    response_model=AuthStatusResponse,
+)
+def auth_status():
+    mode = _auth_mode()
+    auth_required = mode not in {"none", "off", "disabled", "0", "false"}
+    admin_configured = bool(os.getenv("ADMIN_PIN") or (os.getenv("ADMIN_USERNAME") and os.getenv("ADMIN_PASSWORD")))
+    token_endpoint = "/.netlify/functions/get-token" if auth_required else None
+    return AuthStatusResponse(
+        auth_required=auth_required,
+        auth_mode=mode,
+        token_endpoint=token_endpoint,
+        admin_configured=admin_configured,
+    )
 
 
-@router.get('/status')
-async def auth_status(request: Request, db: Session = Depends(get_db)):
-    """Check whether auth is configured (for client-side gating)."""
-    auth_header = request.headers.get('Authorization', '')
-    if not auth_header.startswith('Bearer '):
-        return {'authenticated': False, 'reason': 'no_token'}
-    token = auth_header.split(' ', 1)[1]
-    try:
-        payload = decode_jwt(token)
-    except Exception:
-        return {'authenticated': False, 'reason': 'invalid_token'}
-    if is_token_revoked(db, payload.get('jti')):
-        return {'authenticated': False, 'reason': 'revoked'}
-    return {'authenticated': True, 'sub': payload.get('sub'), 'tenant_id': payload.get('tenant_id')}
+@router.post(
+    "/token",
+    summary="Exchange master key for a 24-hour JWT",
+    response_model=TokenResponse,
+)
+def issue_token(
+    raw_token: str = Security(_oauth2_scheme),
+    db: Session = Depends(get_db),
+):
+    """
+    Present the ``JWORDEN_MASTER_KEY`` as a Bearer token to receive a signed
+    JWT valid for 24 hours.
+
+    Example::
+
+        curl -X POST /api/v1/auth/token \\
+             -H "Authorization: Bearer <JWORDEN_MASTER_KEY>"
+
+    The returned ``access_token`` can then be used in place of the master key
+    for all protected endpoints.
+    """
+    if raw_token is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Authorization header with Bearer token required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    master_key = os.getenv("JWORDEN_MASTER_KEY", "")
+    if not master_key:
+        raise HTTPException(
+            status_code=500,
+            detail="Server authentication is not configured. Set JWORDEN_MASTER_KEY.",
+        )
+
+    if raw_token != master_key:
+        logger.warning(
+            "Token issuance rejected — invalid master key presented (presented=%s expected=%s)",
+            _secret_fingerprint(raw_token),
+            _secret_fingerprint(master_key),
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid master key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = _issue_admin_jwt()
+    logger.info("JWT issued for Admin (tenant=JWORDEN_HQ, expires_in=%ds)", _TOKEN_EXPIRE_SECONDS)
+
+    write_audit_event(
+        db,
+        event_type="auth.token_issued",
+        actor_type="service",
+        actor_id="auth_router",
+        entity_type="auth_token",
+        entity_id="Admin",
+        summary="Issued backend JWT for admin client bootstrap.",
+        detail={"tenant_id": "JWORDEN_HQ", "expires_in": _TOKEN_EXPIRE_SECONDS},
+    )
+
+    return TokenResponse(access_token=token)
+
+
+@router.post(
+    "/pin-token",
+    summary="Exchange the configured admin PIN for a 24-hour JWT",
+    response_model=TokenResponse,
+)
+def issue_pin_token(
+    request: PinTokenRequest,
+    db: Session = Depends(get_db),
+):
+    admin_pin = os.getenv("ADMIN_PIN", "")
+    if not admin_pin:
+        raise HTTPException(
+            status_code=500,
+            detail="PIN authentication is not configured. Set ADMIN_PIN.",
+        )
+
+    if not request.pin or not request.pin.isdigit() or len(request.pin) != 4:
+        raise HTTPException(status_code=400, detail="A 4-digit PIN is required.")
+
+    if request.pin != admin_pin:
+        logger.warning(
+            "PIN token issuance rejected — incorrect PIN presented (presented=%s expected=%s)",
+            _secret_fingerprint(request.pin),
+            _secret_fingerprint(admin_pin),
+        )
+        raise HTTPException(status_code=403, detail="Incorrect PIN")
+
+    token = _issue_admin_jwt()
+    logger.info("JWT issued for Admin via PIN auth (tenant=JWORDEN_HQ, expires_in=%ds)", _TOKEN_EXPIRE_SECONDS)
+
+    write_audit_event(
+        db,
+        event_type="auth.pin_token_issued",
+        actor_type="admin",
+        actor_id="pin_auth",
+        entity_type="auth_token",
+        entity_id="Admin",
+        summary="Issued backend JWT after admin PIN verification.",
+        detail={"tenant_id": "JWORDEN_HQ", "expires_in": _TOKEN_EXPIRE_SECONDS},
+    )
+
+    return TokenResponse(access_token=token)

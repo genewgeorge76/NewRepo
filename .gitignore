@@ -1,33 +1,15 @@
 node_modules/
 dist/
-.env
-.env.local
-.env.*.local
-*.log
-.DS_Store
-Thumbs.db
-
-# Python
+build/
 __pycache__/
-*.py[cod]
+*.pyc
+.env
+.env.*
+*.db
+*.sqlite3
+.DS_Store
 .venv/
 venv/
-*.egg-info/
-.pytest_cache/
-htmlcov/
-
-# Build outputs
-apps/*/dist/
-packages/*/dist/
-
-# TanStack Router auto-generated
-apps/web/src/routeTree.gen.ts
-
-# IDE
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
+*.log
+.netlify/
+.vercel/

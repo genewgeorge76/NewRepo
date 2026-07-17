@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>Worden Crew</title>
+<style>
+  :root{--amber:#f59e0b;--bg:#0f0f0f;--surface:#1a1a1a;--surface2:#242424;--border:#333;--green:#22c55e;--red:#ef4444;--blue:#3b82f6;--gray:#888;--white:#f5f5f5}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--white);font-family:ui-monospace,"JetBrains Mono",Menlo,monospace;min-height:100vh}
+  header{position:sticky;top:0;z-index:10;background:linear-gradient(135deg,#1a1a1a,#242424);border-bottom:1px solid var(--amber);padding:14px 16px;display:flex;align-items:center;gap:10px;padding-top:max(14px,env(safe-area-inset-top))}
+  .logo{font-size:15px;font-weight:800;color:var(--amber);letter-spacing:1.5px;flex:1}
+  .who{font-size:11px;color:var(--gray)}
+  main{padding:16px;max-width:640px;margin:0 auto}
+  label{display:block;font-size:11px;color:var(--gray);text-transform:uppercase;letter-spacing:1px;margin:14px 0 5px}
+  input,select,textarea{width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--white);padding:13px 14px;border-radius:10px;font-size:16px;font-family:inherit}
+  textarea{min-height:54px;resize:vertical}
+  button{font-family:inherit;font-weight:700}
+  .big{display:block;width:100%;background:var(--amber);color:#000;border:none;padding:17px;border-radius:14px;font-size:16px;letter-spacing:1px;margin-top:16px}
+  .big:disabled{opacity:.5}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px}
+  .tile{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 10px;text-align:center;font-size:13px;letter-spacing:.5px;color:var(--white)}
+  .tile .ic{font-size:26px;display:block;margin-bottom:6px}
+  .tile.arrival{border-color:var(--green)} .tile.progress{border-color:var(--blue)}
+  .tile.eod{border-color:var(--amber)} .tile.equip{border-color:var(--gray)}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;margin-top:12px}
+  .banner{font-size:12px;color:var(--gray);margin-top:8px;line-height:1.5}
+  .row{display:flex;gap:8px} .row>*{flex:1}
+  .ghost{background:transparent;border:1px solid var(--border);color:var(--gray);border-radius:10px;padding:11px}
+  .log{font-size:12px;color:#ccc;border-bottom:1px solid var(--border);padding:9px 0;display:flex;gap:8px;align-items:center}
+  .log img{width:44px;height:44px;object-fit:cover;border-radius:8px;border:1px solid var(--border)}
+  .pill{font-size:9px;padding:2px 7px;border-radius:20px;background:#333;color:var(--amber);letter-spacing:.5px}
+  .hidden{display:none}
+  .toast{position:fixed;left:16px;right:16px;bottom:20px;background:var(--surface2);border:1px solid var(--amber);border-radius:12px;padding:12px 14px;font-size:13px;text-align:center;z-index:50}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">WORDEN CREW</div>
+  <div class="who" id="who"></div>
+  <button class="ghost hidden" id="logout" style="flex:0;padding:6px 10px;font-size:11px">Log out</button>
+</header>
+<main>
+  <!-- LOGIN -->
+  <section id="loginView">
+    <div class="card">
+      <div style="font-weight:800;color:var(--amber);letter-spacing:1px">CREW LOGIN</div>
+      <div class="banner">Log in with your Worden crew account to start your shift.</div>
+      <label>Username</label>
+      <input id="u" autocapitalize="off" autocorrect="off" spellcheck="false" />
+      <label>Password</label>
+      <input id="p" type="password" />
+      <button class="big" id="loginBtn">Log in & start shift</button>
+      <div class="banner" id="loginMsg"></div>
+    </div>
+  </section>
+
+  <!-- SHIFT -->
+  <section id="shiftView" class="hidden">
+    <label>Job site</label>
+    <input id="job" value="Lake Drive Plaza — Vinton, VA" />
+
+    <div class="card" id="checklistCard">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="font-weight:700;color:var(--amber);font-size:13px;flex:1">SITE PHOTO CHECKLIST</div>
+        <button class="ghost" id="pinBtn" style="flex:0;padding:6px 10px;font-size:10px">📍 Pin job here</button>
+      </div>
+      <div class="banner" id="onsite"></div>
+      <div id="checklist"></div>
+    </div>
+
+    <div class="grid">
+      <button class="tile arrival" data-type="arrival"><span class="ic">📍</span>Arrival + Clock-in</button>
+      <button class="tile progress" data-type="progress"><span class="ic">🚧</span>Progress</button>
+      <button class="tile eod" data-type="eod"><span class="ic">🌙</span>End of Day</button>
+      <button class="tile equip" data-type="equipment"><span class="ic">🚛</span>Equipment staging</button>
+    </div>
+
+    <div class="card">
+      <label>Asphalt tonnage completed (optional)</label>
+      <input id="tons" inputmode="decimal" placeholder="e.g. 42" />
+      <label>Note / details (optional)</label>
+      <textarea id="note" placeholder="e.g. Phase 2 north lot, overlay complete"></textarea>
+    </div>
+
+    <input type="file" id="picker" accept="image/*" capture="environment" hidden />
+
+    <div class="card">
+      <div style="font-weight:700;color:var(--amber);font-size:13px">TODAY'S SHIFT LOG</div>
+      <div id="log"><div class="banner">No entries yet — tap a photo type above to start.</div></div>
+    </div>
+  </section>
+</main>
+<div id="toast" class="toast hidden"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const TOKEN='wc_token', UNAME='wc_user', UROLE='wc_role';
+let pendingType = null;
+
+// ── Per-job photo checklists (standard feature; edit/extend freely) ──────────
+const CHECKLISTS = {
+  'Lake Drive Plaza — Vinton, VA': [
+    'Back of the center', 'Arrival + cones set', 'Progress — sections done',
+    'Asphalt tonnage / materials', 'Equipment staging (evening)', 'End of day — finished sections'
+  ]
+};
+const DEFAULT_CHECKLIST = ['Arrival + cones set', 'Progress', 'Equipment staging', 'End of day'];
+const checklistFor = job => CHECKLISTS[job] || DEFAULT_CHECKLIST;
+const todayKey = () => new Date().toDateString();
+
+function renderChecklist(){
+  const job = $('#job').value.trim();
+  const items = checklistFor(job);
+  const storeKey = `wc_chk_${job}_${todayKey()}`;
+  const done = JSON.parse(localStorage.getItem(storeKey) || '{}');
+  const el = $('#checklist');
+  el.innerHTML = items.map((it,i)=>{
+    const first = i===0 ? ' style="color:var(--amber)"' : '';
+    return `<label class="log" style="cursor:pointer"><input type="checkbox" data-i="${i}" ${done[i]?'checked':''} style="width:auto;flex:0"/><span${first}>${it}</span></label>`;
+  }).join('');
+  el.querySelectorAll('input[type=checkbox]').forEach(cb => cb.onchange = () => {
+    done[cb.dataset.i] = cb.checked; localStorage.setItem(storeKey, JSON.stringify(done));
+  });
+}
+
+function haversine(a,b){ const R=6371000,t=x=>x*Math.PI/180;
+  const dLat=t(b.lat-a.lat),dLng=t(b.lng-a.lng);
+  const s=Math.sin(dLat/2)**2+Math.cos(t(a.lat))*Math.cos(t(b.lat))*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(s)); }
+
+async function checkOnSite(){
+  const job=$('#job').value.trim(); const pin=JSON.parse(localStorage.getItem('wc_pin_'+job)||'null');
+  const box=$('#onsite'); if(!pin){ box.textContent=''; return; }
+  const g=await getGPS(); if(!g.lat){ box.textContent=''; return; }
+  const d=haversine(g,pin);
+  if(d<200){ const first=checklistFor(job)[0];
+    box.innerHTML=`<span style="color:var(--green)">● On-site at this job — first up: <b>${first}</b></span>`; }
+  else { box.innerHTML=`<span class="banner">${Math.round(d)}m from this job's pin.</span>`; }
+}
+
+function toast(msg, ms=2600){ const t=$('#toast'); t.textContent=msg; t.classList.remove('hidden'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.add('hidden'), ms); }
+function authHdr(){ return 'Bearer ' + (localStorage.getItem(TOKEN)||''); }
+
+function showShift(){
+  $('#loginView').classList.add('hidden'); $('#shiftView').classList.remove('hidden');
+  $('#logout').classList.remove('hidden');
+  $('#who').textContent = (localStorage.getItem(UNAME)||'') + (localStorage.getItem(UROLE)?(' · '+localStorage.getItem(UROLE)):'');
+  renderChecklist(); checkOnSite();
+  loadLog();
+}
+function showLogin(){ $('#shiftView').classList.add('hidden'); $('#loginView').classList.remove('hidden'); $('#logout').classList.add('hidden'); $('#who').textContent=''; }
+
+$('#loginBtn').onclick = async () => {
+  const username=$('#u').value.trim(), password=$('#p').value;
+  if(!username||!password){ $('#loginMsg').textContent='Enter username and password.'; return; }
+  $('#loginBtn').disabled=true; $('#loginMsg').textContent='Logging in…';
+  try{
+    const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});
+    const d=await r.json();
+    if(!r.ok){ $('#loginMsg').textContent=d.error||'Login failed'; $('#loginBtn').disabled=false; return; }
+    localStorage.setItem(TOKEN,d.token); localStorage.setItem(UNAME,d.username||username); localStorage.setItem(UROLE,d.role||'');
+    $('#loginBtn').disabled=false; $('#loginMsg').textContent=''; showShift(); toast('Welcome, '+(d.username||username)+' — shift started.');
+  }catch(e){ $('#loginMsg').textContent='Network error.'; $('#loginBtn').disabled=false; }
+};
+
+$('#logout').onclick = () => { localStorage.removeItem(TOKEN); showLogin(); };
+
+$('#job').addEventListener('change', () => { renderChecklist(); checkOnSite(); });
+$('#pinBtn').onclick = async () => {
+  const job=$('#job').value.trim(); $('#pinBtn').textContent='Pinning…';
+  const g=await getGPS();
+  if(!g.lat){ toast('Could not get GPS — check location permission.'); $('#pinBtn').textContent='📍 Pin job here'; return; }
+  localStorage.setItem('wc_pin_'+job, JSON.stringify(g));
+  $('#pinBtn').textContent='📍 Pin job here'; toast('Job site pinned — on-site detection is live.'); checkOnSite();
+};
+
+// Photo tiles → open camera, remember which type was tapped
+document.querySelectorAll('.tile').forEach(t => t.onclick = () => { pendingType = t.dataset.type; $('#picker').click(); });
+
+function getGPS(){ return new Promise(res => {
+  if(!navigator.geolocation) return res({});
+  navigator.geolocation.getCurrentPosition(
+    p => res({ lat:+p.coords.latitude.toFixed(6), lng:+p.coords.longitude.toFixed(6) }),
+    () => res({}), { enableHighAccuracy:true, timeout:6000 });
+}); }
+
+function downscale(file){ return new Promise(res => {
+  const img=new Image(), url=URL.createObjectURL(file);
+  img.onload=()=>{ const max=1600; let w=img.width,h=img.height;
+    if(w>max||h>max){ const r=Math.min(max/w,max/h); w=Math.round(w*r); h=Math.round(h*r); }
+    const c=document.createElement('canvas'); c.width=w; c.height=h; c.getContext('2d').drawImage(img,0,0,w,h);
+    URL.revokeObjectURL(url); res(c.toDataURL('image/jpeg',0.82).split(',')[1]); };
+  img.onerror=()=>{ URL.revokeObjectURL(url); res(null); }; img.src=url;
+}); }
+
+$('#picker').onchange = async (e) => {
+  const file=e.target.files[0]; e.target.value=''; if(!file||!pendingType) return;
+  const type=pendingType; pendingType=null;
+  toast('Uploading '+type+' photo…', 8000);
+  const dataB64 = await downscale(file);
+  const gps = await getGPS();
+  const job=$('#job').value.trim(), tons=$('#tons').value.trim(), userNote=$('#note').value.trim();
+  const note = [`job:${job}`, `type:${type}`, tons?`tons:${tons}`:'', userNote].filter(Boolean).join(' | ');
+  try{
+    const r=await fetch('/api/checkin',{method:'POST',headers:{'Content-Type':'application/json',Authorization:authHdr()},
+      body:JSON.stringify({ note, gps_lat:gps.lat, gps_lng:gps.lng, dataB64, mime:'image/jpeg', filename:type+'.jpg' })});
+    const d=await r.json();
+    if(r.status===401){ toast('Session expired — log in again.'); showLogin(); return; }
+    if(!r.ok){ toast('Failed: '+(d.error||'error')); return; }
+    toast(type.toUpperCase()+' logged ✓'+(gps.lat?' (GPS)':''));
+    // Auto-check the first unchecked checklist item that matches this photo's type/note
+    const storeKey = `wc_chk_${job}_${todayKey()}`;
+    const done = JSON.parse(localStorage.getItem(storeKey) || '{}');
+    const items = checklistFor(job);
+    const idx = items.findIndex((it,i)=>!done[i] && (it.toLowerCase().includes(type) || (type==='arrival'&&/arrival/i.test(it)) || (type==='equipment'&&/equipment/i.test(it)) || (type==='eod'&&/end of day/i.test(it))));
+    if(idx>=0){ done[idx]=true; localStorage.setItem(storeKey, JSON.stringify(done)); }
+    renderChecklist();
+    loadLog();
+  }catch(e){ toast('Network error — photo not sent.'); }
+};
+
+async function loadLog(){
+  try{
+    const r=await fetch('/api/checkins',{headers:{Authorization:authHdr()}});
+    if(r.status===401){ showLogin(); return; }
+    const d=await r.json(); const rows=(d.checkins||[]);
+    const today=new Date().toDateString();
+    const mine=rows.filter(x=>new Date(x.checked_in_at).toDateString()===today);
+    const el=$('#log');
+    if(!mine.length){ el.innerHTML='<div class="banner">No entries yet — tap a photo type above to start.</div>'; return; }
+    el.innerHTML = mine.map(x=>{
+      const note=x.note||''; const m=/type:(\w+)/.exec(note); const type=m?m[1]:'log';
+      const t=new Date(x.checked_in_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+      const clean=note.replace(/job:[^|]*\|?/,'').replace(/type:\w+\s*\|?\s*/,'').trim();
+      return `<div class="log"><span class="pill">${type}</span><div style="flex:1">${t} — ${clean||'photo'}</div>${x.gps_lat?'📍':''}</div>`;
+    }).join('');
+  }catch(e){}
+}
+
+// boot
+if(localStorage.getItem(TOKEN)) showShift(); else showLogin();
+</script>
+</body>
+</html>

@@ -54,12 +54,22 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'
           cache: 'pip'
       - working-directory: apps/api
         run: pip install -r requirements.txt
       - working-directory: apps/api
         run: python -c "from app.main import app; print('FastAPI app imports OK')"
+        env:
+          JWORDEN_MASTER_KEY: ci-test-key
+          JWT_SECRET_KEY: ci-test-secret
+      - name: Validate Alembic migrations (upgrade to head on SQLite)
+        working-directory: apps/api
+        run: python -m alembic upgrade head
+        env:
+          DATABASE_URL: sqlite:///./ci_migration_check.db
+          JWORDEN_MASTER_KEY: ci-test-key
+          JWT_SECRET_KEY: ci-test-secret
 
   pytest:
     name: Python Tests
@@ -68,15 +78,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'
           cache: 'pip'
       - working-directory: apps/api
         run: pip install -r requirements.txt -r requirements-test.txt
       - working-directory: apps/api
-        run: python -m pytest tests/ --timeout=30 -q
+        run: python -m pytest -q --timeout=60
         env:
-          DATABASE_URL: sqlite://
           JWORDEN_MASTER_KEY: test-master-key
           JWT_SECRET_KEY: test-jwt-secret
-          ADMIN_PIN: '1234'
-          ENVIRONMENT: test
+          AUTO_CREATE_TABLES: 'true'

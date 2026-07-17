@@ -1,16 +1,23 @@
 """
-customers.py — CRM Customer and Service History router.
+customers.py — Customer Intelligence Platform router.
 
-Routes (under /api/v1/customers):
-  POST /            create customer
-  GET  /            list customers (paginated, filterable)
-  GET  /stats/overview  CRM stats
-  GET  /{id}        get customer
-  PATCH /{id}       update customer
-  GET  /{id}/history   service history
-  POST /{id}/history   add service history entry
+Endpoints
+─────────
+POST   /api/v1/customers/               Create a single customer record
+GET    /api/v1/customers/               List customers (filterable by state, type)
+GET    /api/v1/customers/{id}           Get a single customer
+PATCH  /api/v1/customers/{id}           Update a customer
+POST   /api/v1/customers/import         Bulk import from JSON or CSV
+GET    /api/v1/customers/{id}/history   Get service history for a customer
+POST   /api/v1/customers/{id}/history   Add a service history entry
+GET    /api/v1/customers/stats/overview Overall CRM stats
+
+All write endpoints require the premium security header.
+List/GET endpoints require auth to protect customer PII.
+
+When Mr. Worden is ready to integrate existing customer databases,
+use the /import endpoint with CSV or JSON — field mapping is flexible.
 """
-from __future__ import annotations
 
 import csv
 import hashlib
@@ -18,148 +25,164 @@ import io
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from ..core.cache import (
     CUSTOMERS_TTL,
+    KEY_CUSTOMER_DETAIL,
     KEY_CUSTOMERS_STATS,
     cache_get,
     cache_set,
     invalidate_customer_caches,
 )
-from ..core.limiter import CUSTOMERS_LIMIT, limiter
+from ..core.limiter import CRM_LIMIT, limiter
 from ..core.security import verify_premium_security
 from ..database import get_db
 from ..models import Customer, ServiceHistory
+from ..services.state_data import STATE_MAP, normalize_state_code
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix='/customers', tags=['customers'])
-
-_VALID_TYPES = {'residential', 'commercial', 'franchise', 'municipal'}
-_VALID_STATES = {
-    'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID',
-    'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS',
-    'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK',
-    'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV',
-    'WI', 'WY', 'DC',
-}
-
-
-def _validate_state(s: Optional[str]) -> Optional[str]:
-    if not s:
-        return None
-    upper = s.upper().strip()
-    if upper not in _VALID_STATES:
-        raise HTTPException(422, f'Invalid state code: {s!r}')
-    return upper
+router = APIRouter(prefix="/api/v1/customers", tags=["customers"])
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class CustomerCreate(BaseModel):
-    name: str
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    company: Optional[str] = None
-    city: Optional[str] = None
-    state_code: Optional[str] = None
-    customer_type: str = 'residential'
-    is_franchise: bool = False
-    brand: Optional[str] = None
-    source: Optional[str] = None
-    notes: Optional[str] = None
+    name:          str            = Field(..., min_length=1, max_length=120)
+    email:         Optional[str]  = Field(default=None, max_length=254)
+    phone:         Optional[str]  = Field(default=None, max_length=30)
+    company:       Optional[str]  = Field(default=None, max_length=120)
+    address:       Optional[str]  = Field(default=None, max_length=300)
+    city:          Optional[str]  = Field(default=None, max_length=100)
+    state_code:    Optional[str]  = Field(default=None, max_length=2)
+    zip_code:      Optional[str]  = Field(default=None, max_length=10)
+    customer_type: Optional[str]  = Field(default=None, max_length=30)
+    is_franchise:  int            = Field(default=0, ge=0, le=1)
+    brand:         Optional[str]  = Field(default=None, max_length=60)
+    notes:         Optional[str]  = Field(default=None, max_length=2000)
+    tags:          Optional[str]  = Field(default=None, max_length=500)
+    external_id:   Optional[str]  = Field(default=None, max_length=100)
+    source:        Optional[str]  = Field(default="manual", max_length=60)
 
 
 class CustomerOut(BaseModel):
-    id: int
-    name: str
-    email: Optional[str]
-    phone: Optional[str]
-    company: Optional[str]
-    city: Optional[str]
-    state_code: Optional[str]
-    customer_type: str
-    is_franchise: bool
-    brand: Optional[str]
-    total_jobs: int
+    id:            int
+    name:          str
+    email:         Optional[str]
+    phone:         Optional[str]
+    company:       Optional[str]
+    state_code:    Optional[str]
+    city:          Optional[str]
+    customer_type: Optional[str]
+    is_franchise:  int
+    brand:         Optional[str]
+    total_jobs:    int
     total_revenue: float
-    created_at: datetime
+    ltv_score:     Optional[float]
+    churn_risk:    Optional[str]
+    created_at:    datetime
 
-    model_config = {'from_attributes': True}
+    class Config:
+        from_attributes = True
 
 
 class ServiceHistoryCreate(BaseModel):
-    job_date: Optional[datetime] = None
-    service_type: Optional[str] = None
-    address: Optional[str] = None
-    state_code: Optional[str] = None
-    revenue: Optional[float] = None
-    notes: Optional[str] = None
+    job_date:        Optional[datetime] = None
+    service_type:    Optional[str]      = Field(default=None, max_length=60)
+    scope_summary:   Optional[str]      = None
+    location:        Optional[str]      = Field(default=None, max_length=300)
+    state_code:      Optional[str]      = Field(default=None, max_length=2)
+    sqft:            Optional[float]    = Field(default=None, ge=0)
+    revenue:         Optional[float]    = Field(default=None, ge=0)
+    is_qsr:          int                = Field(default=0, ge=0, le=1)
+    brand:           Optional[str]      = Field(default=None, max_length=60)
+    warranty_callback: int              = Field(default=0, ge=0, le=1)
+    gc_score:        Optional[float]    = Field(default=None, ge=0, le=5)
+    has_photos:      int                = Field(default=0, ge=0, le=1)
+    dropbox_url:     Optional[str]      = Field(default=None, max_length=500)
+    photos_url:      Optional[str]      = Field(default=None, max_length=500)
+    notes:           Optional[str]      = None
 
 
 class ImportResult(BaseModel):
-    imported: int
-    skipped: int
-    errors: list[str]
+    imported:  int
+    skipped:   int
+    errors:    List[str]
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-@router.post('/', summary='Create a customer', response_model=CustomerOut)
-@limiter.limit(CUSTOMERS_LIMIT)
+def _validate_state(code: Optional[str]) -> Optional[str]:
+    # Thin wrapper kept for backward compatibility — delegates to the shared util.
+    return normalize_state_code(code)
+
+
+# ── CRUD endpoints ────────────────────────────────────────────────────────────
+
+@router.post("", summary="Create a customer record", response_model=CustomerOut)
+@limiter.limit("30/minute")
 async def create_customer(
     request: Request,
     body: CustomerCreate,
     db: Session = Depends(get_db),
     _: dict = Depends(verify_premium_security),
 ):
-    if body.customer_type not in _VALID_TYPES:
-        raise HTTPException(422, f'Invalid customer_type. Must be one of: {", ".join(sorted(_VALID_TYPES))}')
-
-    customer = Customer(
-        **{k: v for k, v in body.model_dump().items() if k != 'state_code'},
+    c = Customer(
+        **body.model_dump(exclude={"state_code"}),
         state_code=_validate_state(body.state_code),
     )
-    db.add(customer)
+    db.add(c)
     db.commit()
-    db.refresh(customer)
+    db.refresh(c)
+    # New customer invalidates list and stats caches
     invalidate_customer_caches()
-    return customer
+    return c
 
 
-@router.get('/', summary='List customers')
-@limiter.limit(CUSTOMERS_LIMIT)
+@router.get("", summary="List customers")
+@limiter.limit(CRM_LIMIT)
 async def list_customers(
-    request: Request,
-    customer_type: Optional[str] = Query(default=None, max_length=30),
-    is_franchise: Optional[bool] = Query(default=None),
-    search: Optional[str] = Query(default=None, max_length=100),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
+    request:       Request,
+    state_code:    Optional[str] = Query(default=None),
+    customer_type: Optional[str] = Query(default=None),
+    is_franchise:  Optional[int] = Query(default=None),
+    search:        Optional[str] = Query(default=None, max_length=100),
+    limit:         int           = Query(default=50, ge=1, le=200),
+    offset:        int           = Query(default=0,  ge=0),
     db: Session = Depends(get_db),
     _: dict = Depends(verify_premium_security),
 ):
+    # Build a stable cache key from all filter parameters
     params = json.dumps(
-        {'type': customer_type, 'franchise': is_franchise, 'q': search, 'limit': limit, 'offset': offset},
+        {
+            "state": state_code,
+            "type": customer_type,
+            "franchise": is_franchise,
+            "search": search,
+            "limit": limit,
+            "offset": offset,
+        },
         sort_keys=True,
     )
-    cache_key = f'customers:list:{hashlib.md5(params.encode()).hexdigest()}'  # noqa: S324
+    cache_key = f"customers:list:{hashlib.md5(params.encode()).hexdigest()}"  # noqa: S324
     cached = cache_get(cache_key)
     if cached is not None:
         return cached
 
     q = db.query(Customer)
+    if state_code:
+        q = q.filter(Customer.state_code == state_code.upper())
     if customer_type:
         q = q.filter(Customer.customer_type == customer_type)
     if is_franchise is not None:
         q = q.filter(Customer.is_franchise == is_franchise)
     if search:
-        like = f'%{search}%'
+        like = f"%{search}%"
         q = q.filter(
             Customer.name.ilike(like)
             | Customer.email.ilike(like)
@@ -168,25 +191,26 @@ async def list_customers(
     total = q.count()
     items = q.order_by(Customer.created_at.desc()).offset(offset).limit(limit).all()
 
+    # Serialise to plain dicts so the result is JSON-safe for Redis
     result = {
-        'total': total,
-        'offset': offset,
-        'limit': limit,
-        'items': [
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "items": [
             {
-                'id': c.id,
-                'name': c.name,
-                'email': c.email,
-                'phone': c.phone,
-                'company': c.company,
-                'city': c.city,
-                'state_code': c.state_code,
-                'customer_type': c.customer_type,
-                'is_franchise': c.is_franchise,
-                'brand': c.brand,
-                'total_jobs': c.total_jobs,
-                'total_revenue': c.total_revenue,
-                'created_at': c.created_at.isoformat(),
+                "id": c.id,
+                "name": c.name,
+                "email": c.email,
+                "phone": c.phone,
+                "company": c.company,
+                "state_code": c.state_code,
+                "city": c.city,
+                "customer_type": c.customer_type,
+                "is_franchise": c.is_franchise,
+                "brand": c.brand,
+                "total_jobs": c.total_jobs,
+                "total_revenue": c.total_revenue,
+                "created_at": c.created_at.isoformat(),
             }
             for c in items
         ],
@@ -195,7 +219,7 @@ async def list_customers(
     return result
 
 
-@router.get('/stats/overview', summary='CRM statistics overview')
+@router.get("/stats/overview", summary="CRM statistics overview")
 async def customer_stats(
     db: Session = Depends(get_db),
     _: dict = Depends(verify_premium_security),
@@ -204,26 +228,25 @@ async def customer_stats(
     if cached is not None:
         return cached
 
-    from sqlalchemy import func  # noqa: PLC0415
-
-    total = db.query(Customer).count()
-    franchise = db.query(Customer).filter(Customer.is_franchise == True).count()  # noqa: E712
-    states = db.query(Customer.state_code).distinct().count()
+    total      = db.query(Customer).count()
+    franchise  = db.query(Customer).filter(Customer.is_franchise == 1).count()
+    states     = db.query(Customer.state_code).distinct().count()
     jobs_total = db.query(ServiceHistory).count()
-    rev_total = db.query(func.sum(Customer.total_revenue)).scalar() or 0.0
-
+    rev_total  = db.query(Customer).with_entities(
+        __import__("sqlalchemy", fromlist=["func"]).func.sum(Customer.total_revenue)
+    ).scalar() or 0.0
     result = {
-        'total_customers': total,
-        'franchise_accounts': franchise,
-        'states_represented': states,
-        'total_jobs_on_record': jobs_total,
-        'total_revenue_on_record': round(float(rev_total), 2),
+        "total_customers": total,
+        "franchise_accounts": franchise,
+        "states_represented": states,
+        "total_jobs_on_record": jobs_total,
+        "total_revenue_on_record": round(float(rev_total), 2),
     }
     cache_set(KEY_CUSTOMERS_STATS, result, CUSTOMERS_TTL)
     return result
 
 
-@router.get('/{customer_id}', summary='Get a customer', response_model=CustomerOut)
+@router.get("/{customer_id}", summary="Get a customer", response_model=CustomerOut)
 async def get_customer(
     customer_id: int,
     db: Session = Depends(get_db),
@@ -231,11 +254,11 @@ async def get_customer(
 ):
     c = db.get(Customer, customer_id)
     if not c:
-        raise HTTPException(404, 'Customer not found')
+        raise HTTPException(404, "Customer not found")
     return c
 
 
-@router.patch('/{customer_id}', summary='Update a customer')
+@router.patch("/{customer_id}", summary="Update a customer")
 async def update_customer(
     customer_id: int,
     body: CustomerCreate,
@@ -244,21 +267,22 @@ async def update_customer(
 ):
     c = db.get(Customer, customer_id)
     if not c:
-        raise HTTPException(404, 'Customer not found')
-
+        raise HTTPException(404, "Customer not found")
     for k, v in body.model_dump(exclude_unset=True).items():
-        if k == 'state_code':
+        if k == "state_code":
             v = _validate_state(v)
         setattr(c, k, v)
-
     c.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(c)
+    # Invalidate list, stats, and this customer's detail cache
     invalidate_customer_caches(customer_id)
     return c
 
 
-@router.get('/{customer_id}/history', summary='Get service history for a customer')
+# ── Service history ────────────────────────────────────────────────────────────
+
+@router.get("/{customer_id}/history", summary="Get service history for a customer")
 async def get_service_history(
     customer_id: int,
     db: Session = Depends(get_db),
@@ -266,33 +290,17 @@ async def get_service_history(
 ):
     c = db.get(Customer, customer_id)
     if not c:
-        raise HTTPException(404, 'Customer not found')
-
+        raise HTTPException(404, "Customer not found")
     items = (
         db.query(ServiceHistory)
         .filter(ServiceHistory.customer_id == customer_id)
         .order_by(ServiceHistory.job_date.desc())
         .all()
     )
-    return {
-        'customer_id': customer_id,
-        'jobs': len(items),
-        'history': [
-            {
-                'id': h.id,
-                'job_date': h.job_date.isoformat() if h.job_date else None,
-                'service_type': h.service_type,
-                'address': h.address,
-                'state_code': h.state_code,
-                'revenue': h.revenue,
-                'notes': h.notes,
-            }
-            for h in items
-        ],
-    }
+    return {"customer_id": customer_id, "jobs": len(items), "history": items}
 
 
-@router.post('/{customer_id}/history', summary='Add a service history entry')
+@router.post("/{customer_id}/history", summary="Add a service history entry")
 async def add_service_history(
     customer_id: int,
     body: ServiceHistoryCreate,
@@ -301,19 +309,16 @@ async def add_service_history(
 ):
     c = db.get(Customer, customer_id)
     if not c:
-        raise HTTPException(404, 'Customer not found')
+        raise HTTPException(404, "Customer not found")
 
     entry = ServiceHistory(
         customer_id=customer_id,
-        job_date=body.job_date,
-        service_type=body.service_type,
-        address=body.address,
+        **body.model_dump(exclude={"state_code"}),
         state_code=_validate_state(body.state_code),
-        revenue=body.revenue,
-        notes=body.notes,
     )
     db.add(entry)
 
+    # Update customer aggregates
     c.total_jobs += 1
     if body.revenue:
         c.total_revenue += body.revenue
@@ -322,68 +327,93 @@ async def add_service_history(
 
     db.commit()
     db.refresh(entry)
+    # Service history changes affect customer stats and detail caches
     invalidate_customer_caches(customer_id)
     return entry
 
 
-@router.post('/import', summary='Bulk import customers from JSON or CSV', response_model=ImportResult)
-@limiter.limit('5/minute')
+# ── Bulk import ────────────────────────────────────────────────────────────────
+
+@router.post("/import", summary="Bulk import customers from JSON or CSV", response_model=ImportResult)
+@limiter.limit("5/minute")
 async def import_customers(
     request: Request,
     file: UploadFile = File(...),
-    source: str = Query(default='import', max_length=60),
+    source: str = Query(default="import_csv", max_length=60),
     db: Session = Depends(get_db),
     _: dict = Depends(verify_premium_security),
 ):
+    """
+    Import customers from:
+      - JSON array: [{name, email, phone, state_code, ...}, ...]
+      - CSV with header row matching CustomerCreate fields
+
+    Existing customers matched on email are skipped (no duplicates).
+    The ``source`` query param is recorded on every imported record.
+    """
     content = await file.read()
-    text = content.decode('utf-8-sig', errors='replace')
-
-    records: list[dict] = []
     errors: list[str] = []
-
-    if file.filename and file.filename.lower().endswith('.csv'):
-        reader = csv.DictReader(io.StringIO(text))
-        for i, row in enumerate(reader):
-            records.append({k.strip(): v.strip() for k, v in row.items()})
-    else:
-        try:
-            records = json.loads(text)
-            if not isinstance(records, list):
-                raise ValueError('JSON must be an array')
-        except (json.JSONDecodeError, ValueError) as exc:
-            raise HTTPException(422, f'Invalid file format: {exc}') from exc
-
     imported = 0
-    skipped = 0
+    skipped  = 0
 
-    for i, rec in enumerate(records):
-        name = rec.get('name', '').strip()
-        if not name:
-            errors.append(f'Row {i + 1}: missing name — skipped')
-            skipped += 1
-            continue
+    # Determine format
+    filename = (file.filename or "").lower()
+    is_csv   = filename.endswith(".csv") or file.content_type == "text/csv"
+
+    try:
+        if is_csv:
+            rows = list(csv.DictReader(io.StringIO(content.decode("utf-8-sig"))))
+        else:
+            rows = json.loads(content.decode("utf-8"))
+            if not isinstance(rows, list):
+                raise ValueError("JSON must be an array of customer objects")
+    except Exception as exc:
+        raise HTTPException(422, f"Could not parse file: {exc}") from exc
+
+    existing_emails: set[str] = {
+        e for (e,) in db.query(Customer.email).filter(Customer.email.isnot(None)).all()
+    }
+
+    for i, row in enumerate(rows):
         try:
-            customer = Customer(
-                name=name,
-                email=rec.get('email') or None,
-                phone=rec.get('phone') or None,
-                company=rec.get('company') or None,
-                city=rec.get('city') or None,
-                state_code=_validate_state(rec.get('state_code') or rec.get('state') or None),
-                customer_type=rec.get('customer_type', 'residential'),
-                is_franchise=str(rec.get('is_franchise', 'false')).lower() in ('1', 'true', 'yes'),
-                brand=rec.get('brand') or None,
-                source=source,
+            name = (row.get("name") or row.get("Name") or "").strip()
+            if not name:
+                skipped += 1
+                continue
+
+            email = (row.get("email") or row.get("Email") or "").strip().lower() or None
+            if email and email in existing_emails:
+                skipped += 1
+                continue
+
+            c = Customer(
+                name          = name,
+                email         = email,
+                phone         = (row.get("phone") or row.get("Phone") or "").strip() or None,
+                company       = (row.get("company") or "").strip() or None,
+                address       = (row.get("address") or "").strip() or None,
+                city          = (row.get("city") or "").strip() or None,
+                state_code    = _validate_state(row.get("state_code") or row.get("state")),
+                zip_code      = (row.get("zip_code") or row.get("zip") or "").strip() or None,
+                customer_type = (row.get("customer_type") or "").strip() or None,
+                is_franchise  = int(row.get("is_franchise") or 0),
+                brand         = (row.get("brand") or "").strip() or None,
+                notes         = (row.get("notes") or "").strip() or None,
+                external_id   = (row.get("external_id") or row.get("id") or "").strip() or None,
+                source        = source,
             )
-            db.add(customer)
+            db.add(c)
+            if email:
+                existing_emails.add(email)
             imported += 1
-        except HTTPException as exc:
-            errors.append(f'Row {i + 1} ({name}): {exc.detail}')
-            skipped += 1
-        except Exception as exc:
-            errors.append(f'Row {i + 1} ({name}): {exc}')
+
+            if imported % 100 == 0:
+                db.flush()  # periodic flush for large imports
+
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"Row {i+1}: {exc}")
             skipped += 1
 
     db.commit()
-    invalidate_customer_caches()
-    return ImportResult(imported=imported, skipped=skipped, errors=errors[:50])
+    logger.info("Customer import: %d imported, %d skipped, %d errors", imported, skipped, len(errors))
+    return ImportResult(imported=imported, skipped=skipped, errors=errors[:20])
