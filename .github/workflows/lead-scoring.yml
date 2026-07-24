@@ -2,7 +2,7 @@ name: Lead Scoring
 
 on:
   schedule:
-    - cron: '0 * * * *'  # every hour
+    - cron: '0 6,18 * * *'  # twice daily (6am/6pm UTC) — was hourly, ate the free Actions-minutes cap
   workflow_dispatch:
 
 jobs:
