@@ -11,7 +11,9 @@ Routes (under /api/v1/voice-ai):
 
 All endpoints require X-Master-Key header (premium/owner-tier security).
 """
-from __future__ import annotations
+# NOTE: no `from __future__ import annotations` here — this router uses slowapi's
+# @limiter.limit, and postponed annotations make FastAPI resolve body/UploadFile
+# type hints against the limiter wrapper's globals, breaking request binding.
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel

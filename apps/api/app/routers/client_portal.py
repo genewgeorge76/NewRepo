@@ -1,5 +1,7 @@
 """Client portal — customer-facing: view proposals, pay deposit, track job status."""
-from __future__ import annotations
+# NOTE: no `from __future__ import annotations` here — this router uses slowapi's
+# @limiter.limit, and postponed annotations make FastAPI resolve body/UploadFile
+# type hints against the limiter wrapper's globals, breaking request binding.
 
 import hashlib
 import uuid

@@ -1,5 +1,10 @@
-"""Gallery — job photo upload, list, delete. Local filesystem + S3."""
-from __future__ import annotations
+"""Gallery — job photo upload, list, delete. Local filesystem + S3.
+
+No `from __future__ import annotations`: this router takes UploadFile params, and
+postponed annotations break FastAPI's file-upload handling once a route is also
+wrapped by slowapi's @limiter.limit. Kept eager for consistency with the other
+upload routers and to avoid a latent break if a rate limit is added later.
+"""
 
 import mimetypes
 import os
