@@ -8,7 +8,9 @@ Routes (under /api/v1/lien):
   GET  /entries       list all entries (with optional state_code filter)
   GET  /states        list supported states
 """
-from __future__ import annotations
+# NOTE: no `from __future__ import annotations` here — this router uses slowapi's
+# @limiter.limit, and postponed annotations make FastAPI resolve body/UploadFile
+# type hints against the limiter wrapper's globals, breaking request binding.
 
 import logging
 from datetime import datetime, timezone

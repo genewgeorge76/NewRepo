@@ -9,8 +9,12 @@ Routes (under /api/v1/customers):
   PATCH /{id}       update customer
   GET  /{id}/history   service history
   POST /{id}/history   add service history entry
+
+NOTE: No `from __future__ import annotations` here on purpose. The /import route
+is wrapped by slowapi's @limiter.limit and takes an UploadFile; postponed
+(stringized) annotations make FastAPI resolve UploadFile against the limiter
+wrapper's globals and fail. Eager annotations avoid that.
 """
-from __future__ import annotations
 
 import csv
 import hashlib

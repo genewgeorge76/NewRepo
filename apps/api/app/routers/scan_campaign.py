@@ -1,5 +1,7 @@
 """Scan campaign router — Property Scan → Direct Mail pipeline management."""
-from __future__ import annotations
+# NOTE: no `from __future__ import annotations` here — this router uses slowapi's
+# @limiter.limit, and postponed annotations make FastAPI resolve body/UploadFile
+# type hints against the limiter wrapper's globals, breaking request binding.
 
 import json
 from datetime import datetime, timezone

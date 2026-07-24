@@ -5,8 +5,14 @@ Routes (under /api/v1/voice):
   POST /upload           upload audio file for transcription + lead creation
   POST /twilio/webhook   TwiML inbound call handler (signature-validated)
   POST /twilio/recording Twilio recording callback (SSRF-protected, signature-validated)
+
+NOTE: This module intentionally does NOT use `from __future__ import annotations`.
+The /upload route is wrapped by slowapi's @limiter.limit, whose wrapper lives in
+another module. With postponed (stringized) annotations, FastAPI resolves the
+UploadFile annotation against that wrapper's globals — where UploadFile is absent —
+and fails with `Invalid args for response field ... ForwardRef('UploadFile')`.
+Keeping annotations eager (real objects) avoids the mis-resolution.
 """
-from __future__ import annotations
 
 import hashlib
 import hmac

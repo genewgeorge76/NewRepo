@@ -2,7 +2,9 @@
 
 Advisory outputs only — not legal advice. Every response carries a disclaimer.
 """
-from __future__ import annotations
+# NOTE: no `from __future__ import annotations` here — this router uses slowapi's
+# @limiter.limit, and postponed annotations make FastAPI resolve body/UploadFile
+# type hints against the limiter wrapper's globals, breaking request binding.
 
 from typing import Optional
 
