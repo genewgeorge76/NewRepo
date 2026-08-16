@@ -7,6 +7,10 @@ interface Message {
   content: string;
 }
 
+// Hosting is Vercel + Fly.io — chat goes straight to the FastAPI backend
+// (apps/api -> POST /api/v1/ai/jarvis).  There is no Netlify Function layer.
+const API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').replace(/\/$/, '');
+
 const STARTERS = [
   'How much does asphalt paving cost per sq ft?',
   'Do you pave commercial parking lots?',
@@ -20,6 +24,9 @@ export function JarvisChat() {
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  // The API keeps conversation history server-side per session and prepends it
+  // to whatever we send, so we post only the new turn and echo the session id back.
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -36,12 +43,17 @@ export function JarvisChat() {
     setLoading(true);
 
     try {
-      const res = await fetch('/.netlify/functions/jarvis', {
+      const res = await fetch(`${API_BASE}/api/v1/ai/jarvis`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: next }),
+        body: JSON.stringify({
+          messages: [{ role: 'user', content }],
+          session_id: sessionId,
+        }),
       });
-      const data = await res.json() as { reply?: string; error?: string };
+      if (!res.ok) throw new Error('Jarvis request failed');
+      const data = await res.json() as { reply?: string; session_id?: string };
+      if (data.session_id) setSessionId(data.session_id);
       setMessages((m) => [...m, { role: 'assistant', content: data.reply ?? 'Sorry, I hit an error. Please call us directly.' }]);
     } catch {
       setMessages((m) => [...m, { role: 'assistant', content: 'Network error. Please call us directly.' }]);
