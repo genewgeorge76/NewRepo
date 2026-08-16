@@ -25,6 +25,10 @@ const SERVICES = [
 
 type Status = 'idle' | 'submitting' | 'success' | 'error';
 
+// Hosting is Vercel + Fly.io.  Leads go directly to the FastAPI backend
+// (apps/api -> POST /api/v1/leads/contact); there is no Netlify Function layer.
+const API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').replace(/\/$/, '');
+
 export function LeadCaptureForm({ compact = false }: { compact?: boolean }) {
   const [form, setForm] = useState<FormData>({ name: '', phone: '', email: '', service: '', address: '', message: '' });
   const [status, setStatus] = useState<Status>('idle');
@@ -38,12 +42,29 @@ export function LeadCaptureForm({ compact = false }: { compact?: boolean }) {
     if (!form.name || !form.phone) return;
     setStatus('submitting');
     try {
-      const res = await fetch('/.netlify/functions/leads', {
+      const res = await fetch(`${API_BASE}/api/v1/leads/contact`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, source: 'web-form', submittedAt: new Date().toISOString() }),
+        body: JSON.stringify({
+          name: form.name,
+          phone: form.phone,
+          email: form.email || null,
+          address: form.address || null,
+          service: form.service || null,
+          // The API field is `description`; `message` would be silently dropped.
+          description: form.message || null,
+          source: 'web-form',
+        }),
       });
       if (!res.ok) throw new Error('Submission failed');
+
+      // Confirm we actually reached the API and it persisted a lead.  A catch-all
+      // SPA rewrite will happily return 200 + index.html for an unmatched path, so
+      // res.ok alone is not proof of success — that is precisely how this form
+      // silently discarded leads while showing a confirmation message.
+      const lead = await res.json().catch(() => null);
+      if (!lead?.id) throw new Error('Submission failed');
+
       setStatus('success');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
